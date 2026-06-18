@@ -5,12 +5,13 @@ import FolderAnalyzer from "./components/FolderAnalyzer";
 import GmailScanner from "./components/GmailScanner";
 import GradingDashboard from "./components/GradingDashboard";
 import GradeBook from "./components/GradeBook";
-import { GraduationCap, BarChart3, FolderSync, MailQuestion, Sheet, Save, RefreshCw, Layers, Check, Loader } from "lucide-react";
+import SubmissionOverview from "./components/SubmissionOverview";
+import { GraduationCap, BarChart3, FolderSync, MailQuestion, Sheet, Save, RefreshCw, Layers, Check, Loader, ClipboardList } from "lucide-react";
 
 export default function App() {
   const [dbState, setDbState] = useState<DatabaseState | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "folder" | "gmail" | "gradebook">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "folder" | "gmail" | "gradebook" | "submissions">("dashboard");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -97,7 +98,7 @@ export default function App() {
             onClick={() => setActiveTab("dashboard")}
             className={`w-full text-left px-4 py-2.5 rounded transition flex items-center justify-between text-xs font-semibold ${
               activeTab === "dashboard"
-                ? "bg-slate-805 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
+                ? "bg-slate-800 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
                 : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
             }`}
           >
@@ -112,7 +113,7 @@ export default function App() {
             onClick={() => setActiveTab("gradebook")}
             className={`w-full text-left px-4 py-2.5 rounded transition flex items-center justify-between text-xs font-semibold ${
               activeTab === "gradebook"
-                ? "bg-slate-805 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
+                ? "bg-slate-800 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
                 : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
             }`}
           >
@@ -124,10 +125,25 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab("submissions")}
+            className={`w-full text-left px-4 py-2.5 rounded transition flex items-center justify-between text-xs font-semibold ${
+              activeTab === "submissions"
+                ? "bg-slate-800 text-white border-l-4 border-blue-500 font-bold"
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <ClipboardList className="w-4 h-4 text-slate-400" />
+              <span>繳交總覽</span>
+            </div>
+            {activeTab === "submissions" && <div className="w-2.5 h-2.5 bg-blue-500 rounded-full"></div>}
+          </button>
+
+          <button
             onClick={() => setActiveTab("folder")}
             className={`w-full text-left px-4 py-2.5 rounded transition flex items-center justify-between text-xs font-semibold ${
               activeTab === "folder"
-                ? "bg-slate-805 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
+                ? "bg-slate-800 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
                 : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
             }`}
           >
@@ -142,7 +158,7 @@ export default function App() {
             onClick={() => setActiveTab("gmail")}
             className={`w-full text-left px-4 py-2.5 rounded transition flex items-center justify-between text-xs font-semibold ${
               activeTab === "gmail"
-                ? "bg-slate-805 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
+                ? "bg-slate-800 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
                 : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
             }`}
           >
@@ -157,7 +173,7 @@ export default function App() {
             onClick={() => setActiveTab("courses")}
             className={`w-full text-left px-4 py-2.5 rounded transition flex items-center justify-between text-xs font-semibold ${
               activeTab === "courses"
-                ? "bg-slate-805 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
+                ? "bg-slate-800 text-white bg-slate-800 border-l-4 border-blue-500 font-bold"
                 : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
             }`}
           >
@@ -230,6 +246,14 @@ export default function App() {
               }`}
             >
               試算
+            </button>
+            <button
+              onClick={() => setActiveTab("submissions")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded transition ${
+                activeTab === "submissions" ? "bg-slate-800 text-white font-black" : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              繳交總覽
             </button>
             <button
               onClick={() => setActiveTab("folder")}
@@ -306,7 +330,7 @@ export default function App() {
                 <span className="hidden sm:inline">變更同步中...</span>
               </span>
             ) : (
-              <span className="text-[11px] text-slate-500 font-mono flex items-center gap-1 bg-slate-150 border border-slate-200 px-2.5 py-1 rounded">
+              <span className="text-[11px] text-slate-500 font-mono flex items-center gap-1 bg-slate-100 border border-slate-200 px-2.5 py-1 rounded">
                 <span className="w-1.5 h-1.5 bg-blue-500 rounded-full inline-block"></span>
                 <span>資料已雲端就緒</span>
               </span>
@@ -322,7 +346,7 @@ export default function App() {
               <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded flex items-center justify-center">
                 <GraduationCap className="w-6 h-6" />
               </div>
-              <h3 className="font-display font-bold text-lg text-slate-850">歡迎使用 EduGrade AI 智慧評分系統！</h3>
+              <h3 className="font-display font-bold text-lg text-slate-800">歡迎使用 EduGrade AI 智慧評分系統！</h3>
               <p className="text-xs text-slate-500 max-w-sm leading-relaxed">
                 目前本機安全資料庫中尚未建立任何課程學籍。請先前往課程管理頁面建立一門您在校的學能授課。
               </p>
@@ -347,6 +371,13 @@ export default function App() {
                   courses={courses}
                   selectedCourseId={selectedCourseId}
                   onUpdateCourses={handleUpdateCourses}
+                />
+              )}
+
+              {activeTab === "submissions" && (
+                <SubmissionOverview
+                  courses={courses}
+                  selectedCourseId={selectedCourseId}
                 />
               )}
 
@@ -379,7 +410,7 @@ export default function App() {
         </div>
 
         {/* FOOTER */}
-        <footer className="bg-white border-t border-slate-250 py-3 px-8 text-[11px] text-slate-400 font-mono text-center sm:text-left flex flex-col sm:flex-row justify-between gap-2" id="id_footer_info">
+        <footer className="bg-white border-t border-slate-200 py-3 px-8 text-[11px] text-slate-400 font-mono text-center sm:text-left flex flex-col sm:flex-row justify-between gap-2" id="id_footer_info">
           <span>🎯 EduGrade AI CoPilot 版權所有 • 支援即時 PDF/XLSX 行動辨識與 Gmail 單頁通訊</span>
           <span>連線安全伺服器 • 辨識引擎 (Gemini AI-Core)</span>
         </footer>

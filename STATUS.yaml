@@ -1,0 +1,20 @@
+name: EduGrade AI
+name_zh: 智慧評分助理
+category: edtech
+progress: 85
+status: active
+last_updated: "2026-06-18"
+next_milestone: "Gmail 多附件支援、及格門檻可設定、評分標準範本庫"
+technologies:
+  - React
+  - TypeScript
+  - Vite
+  - Tailwind CSS
+  - Express
+  - Gemini API
+  - mammoth
+outputs:
+  - tool
+description: "AI-assisted course grading assistant with offline Gmail intake, docx grading, and submission tracking"
+description_zh: "整合 Gemini 3.5 Flash 的課程評分助理：Gmail 離線批次評分、Word 文件評分、繳交追蹤與累計加權成績"
+key_metrics: "6 大功能頁、Gmail 離線暫存、多訊號學籍配對、累計加權分計算"

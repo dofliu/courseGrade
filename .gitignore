@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# 本機成績資料庫（含學生個資/成績，不應進 git）
+db.json
+
+# Gmail 離線暫存（信件 manifest + 下載的附件檔，含個資，不應進 git）
+gmail_cache/

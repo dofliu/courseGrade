@@ -1,4 +1,4 @@
-import React, { useState, useRef, ChangeEvent } from "react";
+import React, { useState, useRef, useEffect, ChangeEvent } from "react";
 import { Course, Student, SimulatedUploadedFile } from "../types";
 import { FolderOpen, Play, Check, AlertTriangle, FileText, UserPlus, Save, Edit3, ArrowRight, Loader } from "lucide-react";
 
@@ -22,6 +22,32 @@ export default function FolderAnalyzer({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedCourse = courses.find((c) => c.id === targetCourseId) || courses[0];
+
+  // 永遠指向最新的 courses，讓批次中連續的自動登記基於最新資料合併、不互相覆蓋
+  const coursesRef = useRef(courses);
+  useEffect(() => {
+    coursesRef.current = courses;
+  }, [courses]);
+
+  // 把指定學生在目前評分項目標記為「已繳待評」(submitted)，但不動分數
+  const markStudentsSubmitted = (studentIds: string[]) => {
+    if (!targetAsstId || studentIds.length === 0) return;
+    const latest = coursesRef.current;
+    const course = latest.find((c) => c.id === targetCourseId) || latest[0];
+    if (!course) return;
+
+    let changed = false;
+    const updatedStudents = course.students.map((s) => {
+      if (studentIds.includes(s.id) && s.submitStatus[targetAsstId] !== "submitted" && s.grades[targetAsstId] == null) {
+        changed = true;
+        return { ...s, submitStatus: { ...s.submitStatus, [targetAsstId]: "submitted" as const } };
+      }
+      return s;
+    });
+    if (!changed) return;
+
+    onUpdateCourses(latest.map((c) => (c.id === course.id ? { ...course, students: updatedStudents } : c)));
+  };
 
   // Set default assessment if not set or empty
   if (selectedCourse && !targetAsstId && selectedCourse.assessments.length > 0) {
@@ -115,6 +141,7 @@ export default function FolderAnalyzer({
             fileName: file.name,
             roster: selectedCourse.students.map((s) => ({ studentId: s.studentId, name: s.name })),
             assessmentName: activeAssessment?.name || "作業",
+            rubric: activeAssessment?.rubric || "",
           }),
         });
 
@@ -141,6 +168,12 @@ export default function FolderAnalyzer({
           `✓ 完成 📍 辨識學生: ${data.studentName || "未知"} (得分: ${data.score != null ? data.score : "未評分"})`
         ]);
 
+        // 辨識配對到名單學生 → 立即登記「已繳待評」（分數待按下儲存才寫入）
+        const matched = findMatchingStudentFromRoster(data.studentName || "", data.studentId || "");
+        if (matched) {
+          markStudentsSubmitted([matched.id]);
+        }
+
       } catch (err: any) {
         console.error("Single file AI fail:", err);
         updatedQueue[i] = {
@@ -148,7 +181,7 @@ export default function FolderAnalyzer({
           status: "failed",
           error: err.message || "通訊或辨識錯誤",
         };
-        setAnalyzedLogs((prev) => [...prev, `❌ 辨識失敗: $${file.name} - ${err.message || "錯誤"}`]);
+        setAnalyzedLogs((prev) => [...prev, `❌ 辨識失敗: ${file.name} - ${err.message || "錯誤"}`]);
       }
 
       setFileQueue([...updatedQueue]);
@@ -191,11 +224,12 @@ export default function FolderAnalyzer({
       const matchedFile = fileQueue.find((file) => {
         if (file.status !== "completed" || !file.analysisResult) return false;
         const res = file.analysisResult;
-        // Compare by StudentId or Name
+        // 以學號或姓名比對；必須先確認 AI 回傳值非空字串，
+        // 否則 "".includes("") 永遠為 true，會把成績誤寫到名單第一位學生身上。
         return (
-          res.studentId === student.studentId ||
-          student.name.includes(res.studentName) ||
-          res.studentName.includes(student.name)
+          (!!res.studentId && res.studentId === student.studentId) ||
+          (!!res.studentName && student.name.includes(res.studentName)) ||
+          (!!res.studentName && res.studentName.includes(student.name))
         );
       });
 
@@ -294,7 +328,7 @@ export default function FolderAnalyzer({
           
           <div
             onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-slate-250 bg-slate-50 p-6 text-center cursor-pointer hover:border-blue-500 hover:bg-slate-100 transition-all group rounded-none"
+            className="border-2 border-dashed border-slate-200 bg-slate-50 p-6 text-center cursor-pointer hover:border-blue-500 hover:bg-slate-100 transition-all group rounded-none"
           >
             <FolderOpen className="w-10 h-10 text-slate-400 group-hover:text-blue-600 mx-auto mb-3 transition" />
             <div className="text-xs font-bold text-slate-700 mb-1">點擊瀏覽電腦上的資料夾</div>
@@ -313,7 +347,7 @@ export default function FolderAnalyzer({
             />
           </div>
 
-          <div className="text-[10px] text-blue-850 bg-blue-50 p-3 border border-blue-150 leading-relaxed font-sans">
+          <div className="text-[10px] text-blue-800 bg-blue-50 p-3 border border-blue-200 leading-relaxed font-sans">
             💡 <strong>說明：</strong>配合瀏覽器安全性規範，本系統採用進階 HTML5 虛擬目錄讀取機制，您可以放心地選擇您本機的作業目錄。所有流程皆於您的當下工作階段中進行，高效率且絕對保護隱私與安全性。
           </div>
         </div>
@@ -321,12 +355,12 @@ export default function FolderAnalyzer({
         {/* CURRENT LIVE RUN LOGS */}
         <div className="bg-white p-6 border border-slate-200 shadow-sm space-y-3">
           <h4 className="font-display font-medium text-sm text-slate-700">AI 辨識記錄日誌</h4>
-          <div className="h-44 bg-slate-900 p-3 text-[10px] font-mono text-emerald-450 overflow-y-auto space-y-1 scrollbar-thin">
+          <div className="h-44 bg-slate-900 p-3 text-[10px] font-mono text-emerald-400 overflow-y-auto space-y-1 scrollbar-thin">
             {analyzedLogs.length === 0 ? (
               <span className="text-slate-500">等待載入與分析...</span>
             ) : (
               analyzedLogs.map((log, idx) => (
-                <div key={idx} className="leading-5 break-all text-emerald-450">{log}</div>
+                <div key={idx} className="leading-5 break-all text-emerald-400">{log}</div>
               ))
             )}
           </div>
@@ -416,7 +450,7 @@ export default function FolderAnalyzer({
                       {/* Status and Actions */}
                       <div className="flex items-center gap-3">
                         {file.status === "idle" && (
-                          <span className="px-2.5 py-1 bg-slate-100 text-slate-650 text-xs font-semibold rounded">
+                          <span className="px-2.5 py-1 bg-slate-100 text-slate-600 text-xs font-semibold rounded">
                             待處理
                           </span>
                         )}
@@ -427,13 +461,13 @@ export default function FolderAnalyzer({
                           </span>
                         )}
                         {file.status === "completed" && (
-                          <span className="px-2.5 py-1 bg-emerald-55 text-emerald-600 text-xs font-semibold rounded flex items-center gap-1">
+                          <span className="px-2.5 py-1 bg-emerald-50 text-emerald-600 text-xs font-semibold rounded flex items-center gap-1">
                             <Check className="w-3.5 h-3.5" />
                             辨識成功
                           </span>
                         )}
                         {file.status === "failed" && (
-                          <span className="px-2.5 py-1 bg-red-50 text-red-650 text-xs font-semibold rounded flex items-center gap-1">
+                          <span className="px-2.5 py-1 bg-red-50 text-red-600 text-xs font-semibold rounded flex items-center gap-1">
                             <AlertTriangle className="w-3.5 h-3.5" />
                             遭遇錯誤
                           </span>
@@ -532,7 +566,7 @@ export default function FolderAnalyzer({
                     )}
 
                     {file.status === "failed" && (
-                      <div className="mt-3 p-3 bg-red-55 bg-red-50 border border-red-200 text-xs text-red-700">
+                      <div className="mt-3 p-3 bg-red-50 bg-red-50 border border-red-200 text-xs text-red-700">
                         <strong>分析出錯：</strong> {file.error}
                       </div>
                     )}

@@ -1,8 +1,23 @@
-import { useState, useEffect } from "react";
-import { Course, Student, GmailMessageResult } from "../types";
-import { googleSignIn, logout, getAccessToken } from "../auth";
-import { User } from "firebase/auth";
+import { useState, useEffect, useRef } from "react";
+import { Course, Student, GmailMessageResult, GmailLabel } from "../types";
+import { googleSignIn, logout, getStoredAuth } from "../auth";
 import { Mail, Search, RefreshCw, CheckCircle, AlertTriangle, FileUp, Loader, UserCheck, Inbox, ArrowRight, Download, Save, LogOut } from "lucide-react";
+
+// Gmail 系統標籤的中文顯示名（使用者自建標籤直接顯示原名）
+const SYSTEM_LABEL_NAMES: Record<string, string> = {
+  INBOX: "收件匣",
+  IMPORTANT: "重要",
+  STARRED: "已加星號",
+  SENT: "寄件備份",
+  UNREAD: "未讀",
+  CATEGORY_PERSONAL: "類別：個人",
+  CATEGORY_UPDATES: "類別：最新快訊",
+  CATEGORY_FORUMS: "類別：論壇",
+  CATEGORY_SOCIAL: "類別：社交網路",
+  CATEGORY_PROMOTIONS: "類別：促銷內容",
+};
+const labelDisplayName = (l: GmailLabel) =>
+  l.type === "system" ? SYSTEM_LABEL_NAMES[l.name] || l.name : l.name;
 
 interface GmailScannerProps {
   courses: Course[];
@@ -15,7 +30,7 @@ export default function GmailScanner({
   selectedCourseId,
   onUpdateCourses,
 }: GmailScannerProps) {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [userEmail, setUserEmail] = useState<string | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isLoadingAuth, setIsLoadingAuth] = useState(true);
 
@@ -23,47 +38,163 @@ export default function GmailScanner({
   const [targetCourseId, setTargetCourseId] = useState(selectedCourseId);
   const [targetAsstId, setTargetAsstId] = useState("");
   const [searchQuery, setSearchQuery] = useState("subject:作業");
-  
+
+  // 信件匣（Gmail 標籤）選擇，用來把掃描範圍限定在某個資料夾
+  const [labels, setLabels] = useState<GmailLabel[]>([]);
+  const [selectedLabelId, setSelectedLabelId] = useState<string>("");
+  const [isLoadingLabels, setIsLoadingLabels] = useState(false);
+
   // Scanned messages queue
   const [messages, setMessages] = useState<GmailMessageResult[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [scanLogs, setScanLogs] = useState<string[]>([]);
 
+  // 本機暫存：上次拉取時間（null 表示這個課程項目尚無暫存）
+  const [pulledAt, setPulledAt] = useState<string | null>(null);
+  const [isLoadingCache, setIsLoadingCache] = useState(false);
+
   const selectedCourse = courses.find((c) => c.id === targetCourseId) || courses[0];
+
+  // 永遠指向最新的 courses，讓自動登記在連續批次中也能基於最新資料合併、不會互相覆蓋
+  const coursesRef = useRef(courses);
+  useEffect(() => {
+    coursesRef.current = courses;
+  }, [courses]);
+
+  // 永遠指向最新的 messages — 批次評分時若用閉包快照會互相覆蓋（已完成的被洗回未評），故改用 ref
+  const messagesRef = useRef<GmailMessageResult[]>(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // 把指定學生在目前評分項目標記為「已繳待評」(submitted)，但不動分數
+  const markStudentsSubmitted = (studentIds: string[]) => {
+    if (!targetAsstId || studentIds.length === 0) return;
+    const latest = coursesRef.current;
+    const course = latest.find((c) => c.id === targetCourseId) || latest[0];
+    if (!course) return;
+
+    let changed = false;
+    const updatedStudents = course.students.map((s) => {
+      const notYetSubmitted = s.submitStatus[targetAsstId] !== "submitted";
+      const notYetGraded = s.grades[targetAsstId] == null;
+      if (studentIds.includes(s.id) && notYetSubmitted && notYetGraded) {
+        changed = true;
+        return { ...s, submitStatus: { ...s.submitStatus, [targetAsstId]: "submitted" as const } };
+      }
+      return s;
+    });
+    if (!changed) return;
+
+    onUpdateCourses(latest.map((c) => (c.id === course.id ? { ...course, students: updatedStudents } : c)));
+  };
 
   // Set default assessment if not set or empty
   if (selectedCourse && !targetAsstId && selectedCourse.assessments.length > 0) {
     setTargetAsstId(selectedCourse.assessments[0].id);
   }
 
-  // Check initial login state
+  // 元件掛載時，從 sessionStorage 還原先前的登入（切 tab / 重整都不必重新登入）
   useEffect(() => {
-    const checkAuthStatus = async () => {
+    try {
+      const stored = getStoredAuth();
+      if (stored) {
+        setAccessToken(stored.accessToken);
+        setUserEmail(stored.email);
+      }
+    } catch (e) {
+      console.warn("Auth initialization check bypassed.");
+    } finally {
+      setIsLoadingAuth(false);
+    }
+  }, []);
+
+  // 登入後載入使用者的 Gmail 信件匣清單，讓老師先挑要掃描的資料夾
+  useEffect(() => {
+    if (!accessToken) {
+      setLabels([]);
+      return;
+    }
+    const loadLabels = async () => {
+      setIsLoadingLabels(true);
       try {
-        const token = await getAccessToken();
-        if (token) {
-          setAccessToken(token);
-        }
-      } catch (e) {
-        console.warn("Auth initialization check bypassed.");
+        const r = await fetch("/api/gmail/labels", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken }),
+        });
+        if (!r.ok) throw new Error((await r.json()).error || "讀取信件匣失敗");
+        const data = await r.json();
+        setLabels(data.labels || []);
+      } catch (e: any) {
+        setScanLogs((prev) => [...prev, `⚠ 信件匣清單讀取失敗：${e.message}`]);
       } finally {
-        setIsLoadingAuth(false);
+        setIsLoadingLabels(false);
       }
     };
-    checkAuthStatus();
-  }, []);
+    loadLabels();
+  }, [accessToken]);
+
+  // 開啟頁面 / 切換課程或評分項目時，自動載入上次拉取到本機的批次（免登入、免連 Gmail）
+  useEffect(() => {
+    if (!targetCourseId || !targetAsstId) return;
+    let cancelled = false;
+    const loadCache = async () => {
+      setIsLoadingCache(true);
+      try {
+        const r = await fetch(
+          `/api/gmail/cache?courseId=${encodeURIComponent(targetCourseId)}&assessmentId=${encodeURIComponent(targetAsstId)}`
+        );
+        if (!r.ok) throw new Error("讀取暫存失敗");
+        const data = await r.json();
+        if (cancelled) return;
+        const msgs: GmailMessageResult[] = (data.messages || []).map((m: any) => ({
+          ...m,
+          status: m.analysis ? "completed" : m.unsupported ? "unsupported" : "idle",
+        }));
+        setMessages(msgs);
+        setPulledAt(data.pulledAt || null);
+        setScanLogs(
+          msgs.length > 0
+            ? [`📁 已載入本機暫存批次（${msgs.length} 封信），可直接評分，不需重新連線 Gmail。`]
+            : []
+        );
+      } catch {
+        if (!cancelled) {
+          setMessages([]);
+          setPulledAt(null);
+        }
+      } finally {
+        if (!cancelled) setIsLoadingCache(false);
+      }
+    };
+    loadCache();
+    return () => {
+      cancelled = true;
+    };
+  }, [targetCourseId, targetAsstId]);
+
+  // 把目前 messages 寫回本機暫存（評分 / 校正後呼叫），下次開啟仍在
+  const saveCache = (msgs: GmailMessageResult[]) => {
+    if (!targetCourseId || !targetAsstId) return;
+    fetch("/api/gmail/cache", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ courseId: targetCourseId, assessmentId: targetAsstId, pulledAt, messages: msgs }),
+    }).catch(() => {});
+  };
 
   const handleLogin = async () => {
     setIsLoadingAuth(true);
     try {
       const result = await googleSignIn();
       if (result) {
-        setCurrentUser(result.user);
+        setUserEmail(result.email);
         setAccessToken(result.accessToken);
       }
     } catch (err: any) {
-      alert("登入失敗，請確認是否允許 Google 帳生連線: " + err.message);
+      alert("登入失敗，請確認是否允許 Google 帳號連線: " + err.message);
     } finally {
       setIsLoadingAuth(false);
     }
@@ -71,16 +202,15 @@ export default function GmailScanner({
 
   const handleLogout = async () => {
     await logout();
-    setCurrentUser(null);
+    setUserEmail(null);
     setAccessToken(null);
-    setMessages([]);
-    setScanLogs([]);
+    // 不清掉 messages — 本機暫存的批次仍可離線複查與評分
   };
 
-  // Perform Gmail search query
+  // 讀取 Gmail：一次把整批信件 + 附件下載到本機（需登入；之後評分/複查都不必再連線）
   const handleSearchEmails = async () => {
     if (!accessToken) {
-      alert("請先連結您的 Google 帳戶！");
+      alert("請先連結您的 Google 帳戶才能讀取新信件！");
       return;
     }
     if (!selectedCourse) {
@@ -88,19 +218,26 @@ export default function GmailScanner({
       return;
     }
 
+    const selectedLabel = labels.find((l) => l.id === selectedLabelId);
+    const labelText = selectedLabel ? labelDisplayName(selectedLabel) : "全部郵件（不限信件匣）";
+
     setIsScanning(true);
-    setScanLogs([`🔍 正在連線至 Gmail API...`, `📂 收件匣查詢過濾詞: "${searchQuery}"`]);
-    setMessages([]);
+    setScanLogs([
+      `🔍 正在連線 Gmail，整批下載信件與附件到本機...`,
+      `📂 信件匣:「${labelText}」　過濾詞: "${searchQuery || "（無，僅依信件匣）"}"`,
+    ]);
 
     try {
-      const response = await fetch("/api/gmail/scan", {
+      const response = await fetch("/api/gmail/pull", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accessToken,
           query: searchQuery,
+          labelIds: selectedLabelId ? [selectedLabelId] : undefined,
           roster: selectedCourse.students,
-          assessmentName: selectedCourse.assessments.find(a => a.id === targetAsstId)?.name || "作業",
+          courseId: targetCourseId,
+          assessmentId: targetAsstId,
         }),
       });
 
@@ -116,14 +253,32 @@ export default function GmailScanner({
       }));
 
       setMessages(fetchedMsgs);
+      setPulledAt(data.pulledAt || null);
+
+      const attachCount = fetchedMsgs.reduce(
+        (n, m) => n + m.attachments.filter((a) => a.localFile).length,
+        0
+      );
       setScanLogs((prev) => [
         ...prev,
-        `✓ 搜尋完成，共篩選出 ${fetchedMsgs.length} 封具備關聯的郵件。`
+        `✓ 已下載 ${fetchedMsgs.length} 封信、${attachCount} 個附件到本機，之後評分免再連線。`,
       ]);
+
+      // 對「以信箱直接配對到」的學生，立即登記為「已繳待評」（分數仍空）
+      const matchedIds = fetchedMsgs
+        .filter((m) => m.matchedStudent)
+        .map((m) => m.matchedStudent!.id);
+      if (matchedIds.length > 0) {
+        markStudentsSubmitted(matchedIds);
+        setScanLogs((prev) => [
+          ...prev,
+          `📝 已自動將 ${matchedIds.length} 位配對成功的學生登記為「已繳待評」。`,
+        ]);
+      }
 
     } catch (e: any) {
       console.error(e);
-      setScanLogs((prev) => [...prev, `❌ 搜尋失敗：${e.message}`]);
+      setScanLogs((prev) => [...prev, `❌ 讀取失敗：${e.message}`]);
     } finally {
       setIsScanning(false);
     }
@@ -131,40 +286,53 @@ export default function GmailScanner({
 
   // Run AI grading for attachments inside a specific email message
   const handleAnalyzeEmailAttachment = async (msgIdx: number) => {
-    const msg = messages[msgIdx];
+    const msg = messagesRef.current[msgIdx];
     if (!msg || msg.attachments.length === 0) return;
 
     const currentAsst = selectedCourse?.assessments.find(a => a.id === targetAsstId);
-    
-    // Set message state to running
-    const updatedMsgs = [...messages];
-    updatedMsgs[msgIdx] = { ...msg, status: "running" };
-    setMessages([...updatedMsgs]);
-
     const attachment = msg.attachments[0]; // analyze first attachment for simplicity
 
-    try {
-      setScanLogs((prev) => [...prev, `⏳ 正在由郵件「${msg.subject}」中下載附件「${attachment.filename}」...`]);
+    // 以最新的 messagesRef 為基準套用單封更新（同步更新 ref + state），批次中不互相覆蓋
+    const applyUpdate = (patch: Partial<GmailMessageResult>): GmailMessageResult[] => {
+      const next = messagesRef.current.map((m, i) => (i === msgIdx ? { ...m, ...patch } : m));
+      messagesRef.current = next;
+      setMessages(next);
+      return next;
+    };
 
-      const response = await fetch("/api/gmail/analyze-attachment", {
+    applyUpdate({ status: "running" });
+
+    try {
+      setScanLogs((prev) => [...prev, `⏳ 正在用本機附件「${attachment.filename}」進行 AI 評分...`]);
+
+      // 用本機已下載的附件評分，完全不需要 Google token
+      const response = await fetch("/api/gmail/analyze-cached", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          accessToken,
+          courseId: targetCourseId,
+          assessmentId: targetAsstId,
           messageId: msg.messageId,
-          attachmentId: attachment.id,
-          mimeType: attachment.mimeType,
-          filename: attachment.filename,
           roster: selectedCourse?.students.map(s => ({ studentId: s.studentId, name: s.name })),
           assessmentName: currentAsst?.name || "作業",
+          rubric: currentAsst?.rubric || "",
         }),
       });
 
       if (!response.ok) {
-        throw new Error(await response.text());
+        const errObj = await response.json().catch(() => ({}));
+        throw new Error(errObj.error || "評分失敗");
       }
 
       const result = await response.json();
+
+      // 不支援的格式（如 .xlsx）— 標記略過，不算失敗、批次不會再重試
+      if (result.unsupported) {
+        const next = applyUpdate({ status: "unsupported", unsupported: true });
+        setScanLogs((prev) => [...prev, `⏭ 略過「${attachment.filename}」：${result.error || "格式無法 AI 評分"}`]);
+        saveCache(next);
+        return;
+      }
 
       const analysisData = {
         studentName: result.studentName || "",
@@ -175,11 +343,7 @@ export default function GmailScanner({
         keyPoints: result.keyPoints || [],
       };
 
-      updatedMsgs[msgIdx] = {
-        ...msg,
-        status: "completed",
-        analysis: analysisData,
-      };
+      const patch: Partial<GmailMessageResult> = { status: "completed", analysis: analysisData };
 
       // Try matching student again if roster wasn't matched via email
       if (!msg.matchedStudent) {
@@ -187,22 +351,26 @@ export default function GmailScanner({
           s => s.studentId === result.studentId || s.name === result.studentName
         );
         if (found) {
-          updatedMsgs[msgIdx].matchedStudent = found;
+          patch.matchedStudent = found;
+          patch.matchedBy = "ai";
+          // AI 辨識補配對成功 → 也登記為「已繳待評」
+          markStudentsSubmitted([found.id]);
         }
       }
 
+      const next = applyUpdate(patch);
       setScanLogs((prev) => [
         ...prev,
         `✓ AI 完成評分 ➔ "${attachment.filename}" 得分: ${result.score} 分`
       ]);
+      saveCache(next);
 
     } catch (e: any) {
       console.error(e);
-      updatedMsgs[msgIdx] = { ...msg, status: "failed" };
+      const next = applyUpdate({ status: "failed" });
       setScanLogs((prev) => [...prev, `❌ 附件辨識出錯：「${attachment.filename}」- ${e.message}`]);
+      saveCache(next);
     }
-
-    setMessages([...updatedMsgs]);
   };
 
   // Modify manual correction values
@@ -226,8 +394,11 @@ export default function GmailScanner({
   // Batch analyse all matched emails sequentially
   const handleBatchAnalyze = async () => {
     setIsAnalyzing(true);
-    for (let i = 0; i < messages.length; i++) {
-      if (messages[i].attachments.length > 0 && messages[i].status !== "completed") {
+    const list = messagesRef.current;
+    for (let i = 0; i < list.length; i++) {
+      const m = list[i];
+      // 已評分(completed) 與 格式不支援(unsupported) 都跳過，只處理未評/失敗且有附件的
+      if (m.attachments.length > 0 && m.status !== "completed" && m.status !== "unsupported" && !m.unsupported) {
         await handleAnalyzeEmailAttachment(i);
       }
     }
@@ -320,7 +491,7 @@ export default function GmailScanner({
             </div>
           ) : (
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-3 bg-emerald-50 text-emerald-855 rounded text-xs font-bold border border-emerald-150">
+              <div className="flex items-center justify-between p-3 bg-emerald-50 text-emerald-800 rounded text-xs font-bold border border-emerald-200">
                 <span className="flex items-center gap-1.5">
                   <CheckCircle className="w-4 h-4 text-emerald-600" />
                   <span>Google APIs 整合就緒</span>
@@ -337,8 +508,8 @@ export default function GmailScanner({
               </div>
 
               <div className="p-4 bg-slate-50 rounded-none border border-slate-200 space-y-1 text-xs">
-                <div className="text-slate-400">目前連線帳號等級：</div>
-                <div className="font-semibold text-slate-700">教務用 Gmail 安全沙盒 (Gmail.readonly)</div>
+                <div className="text-slate-400">目前連線帳號：</div>
+                <div className="font-semibold text-slate-700 break-all">{userEmail || "已連線 (Gmail.readonly)"}</div>
                 <div className="text-[10px] text-slate-400 mt-2">
                   本系統可直接智慧調用 Gmail 安全協定，僅唯讀作業搜尋，無任何修改權限，並恪守資料密隱保護機制。
                 </div>
@@ -389,6 +560,41 @@ export default function GmailScanner({
                   </option>
                 ))}
               </select>
+            </div>
+
+            <div>
+              <label className="block text-slate-600 mb-1 font-semibold flex items-center justify-between">
+                <span>要讀取的信件匣 (Gmail 標籤)</span>
+                {isLoadingLabels && <span className="text-[10px] text-slate-400 font-normal">載入中…</span>}
+              </label>
+              <select
+                value={selectedLabelId}
+                onChange={(e) => setSelectedLabelId(e.target.value)}
+                disabled={!accessToken || isLoadingLabels}
+                className="w-full text-xs px-3 py-2 border border-slate-200 rounded outline-none bg-slate-50 focus:border-blue-500 font-semibold text-slate-700 disabled:opacity-50"
+              >
+                <option value="">全部郵件（不限信件匣）</option>
+                {labels.some((l) => l.type === "user") && (
+                  <optgroup label="我的標籤 / 資料夾">
+                    {labels
+                      .filter((l) => l.type === "user")
+                      .sort((a, b) => a.name.localeCompare(b.name, "zh-Hant"))
+                      .map((l) => (
+                        <option key={l.id} value={l.id}>{l.name}</option>
+                      ))}
+                  </optgroup>
+                )}
+                <optgroup label="系統信件匣">
+                  {labels
+                    .filter((l) => l.type === "system" && ["INBOX", "IMPORTANT", "STARRED", "CATEGORY_PERSONAL", "CATEGORY_UPDATES", "CATEGORY_FORUMS"].includes(l.name))
+                    .map((l) => (
+                      <option key={l.id} value={l.id}>{labelDisplayName(l)}</option>
+                    ))}
+                </optgroup>
+              </select>
+              <div className="text-[10px] text-slate-400 mt-1 leading-relaxed">
+                先挑學生作業所在的信件匣，再搭配下方搜尋條件，避免掃描整個信箱。{!accessToken && "（請先登入 Google）"}
+              </div>
             </div>
 
             <div>
@@ -472,14 +678,28 @@ export default function GmailScanner({
             </div>
           </div>
 
+          {/* 本機暫存提示：信件與附件已存本機，可離線評分 */}
+          {pulledAt && (
+            <div className="flex items-start gap-2 text-[11px] bg-emerald-50 border border-emerald-100 text-emerald-800 rounded px-3 py-2 leading-relaxed">
+              <Save className="w-3.5 h-3.5 text-emerald-600 mt-0.5 flex-shrink-0" />
+              <span>
+                已從本機暫存載入此批次（拉取時間 {new Date(pulledAt).toLocaleString()}）。信件與附件都存在本機，
+                <strong>評分與複查不需再連線 Gmail</strong>；要抓新信時再點「讀取 Gmail」即可。
+              </span>
+            </div>
+          )}
+
           {/* Email content blocks queue */}
           <div className="space-y-4 max-h-[550px] overflow-y-auto pr-1">
             {messages.length === 0 ? (
               <div className="py-24 text-center text-slate-400 flex flex-col items-center justify-center space-y-3">
                 <Inbox className="w-12 h-12 text-slate-300" />
-                <div className="text-sm font-semibold text-slate-500">尚未載入外部信件</div>
+                <div className="text-sm font-semibold text-slate-500">
+                  {isLoadingCache ? "正在載入本機暫存…" : "此課程項目尚無暫存批次"}
+                </div>
                 <p className="text-xs text-slate-400 max-w-sm leading-relaxed">
-                  請先在左側完成 Google 帳號授權，設定主旨過濾，並點選「讀取 Gmail」以搜尋同學作業郵件。
+                  第一次請在左側登入 Google、挑信件匣，點「讀取 Gmail」把整批信件與附件下載到本機。
+                  之後重開此頁會自動載入，評分與複查都不必再連線。
                 </p>
               </div>
             ) : (
@@ -507,6 +727,11 @@ export default function GmailScanner({
                             <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 text-[10px] font-semibold border border-emerald-100 rounded-lg flex items-center gap-1">
                               <UserCheck className="w-3 h-3 text-emerald-500" />
                               配對修課生：{isMatched.name} ({isMatched.studentId})
+                              {msg.matchedBy && (
+                                <span className="opacity-70 font-normal">
+                                  · 依{({ email: "信箱", studentId: "學號", name: "姓名", ai: "AI" } as Record<string, string>)[msg.matchedBy]}比對
+                                </span>
+                              )}
                             </span>
                           ) : (
                             <span className="px-2 py-0.5 bg-amber-50 text-amber-700 text-[10px] font-semibold border border-amber-100 rounded-lg flex items-center gap-1">
@@ -533,11 +758,11 @@ export default function GmailScanner({
                             {msg.attachments.map((attach) => (
                               <div
                                 key={attach.id}
-                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-105 border border-slate-200 hover:border-indigo-300 rounded text-[10px] text-indigo-700 font-mono transition"
+                                className="inline-flex items-center gap-1 px-2.5 py-1 bg-slate-100 border border-slate-200 hover:border-indigo-300 rounded text-[10px] text-indigo-700 font-mono transition"
                               >
                                 <Download className="w-3 h-3" />
                                 <span>{attach.filename}</span>
-                                <span className="text-slate-450">({(attach.size / 1024).toFixed(0)} KB)</span>
+                                <span className="text-slate-400">({(attach.size / 1024).toFixed(0)} KB)</span>
                               </div>
                             ))}
                           </div>
@@ -572,6 +797,23 @@ export default function GmailScanner({
                             完成
                           </span>
                         )}
+                        {msg.status === "unsupported" && (
+                          <span className="px-3 py-1.5 bg-amber-50 text-amber-700 border border-amber-200 text-xs font-semibold rounded flex items-center gap-1" title="此格式無法 AI 直接評分，請手動輸入分數或請學生改交 PDF">
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                            格式不支援 · 請手動
+                          </span>
+                        )}
+                        {msg.status === "failed" && (
+                          <button
+                            onClick={() => handleAnalyzeEmailAttachment(idx)}
+                            disabled={isAnalyzing}
+                            className="px-3 py-1.5 bg-red-50 text-red-600 border border-red-200 text-xs font-semibold rounded flex items-center gap-1 hover:bg-red-100 transition disabled:opacity-50 cursor-pointer"
+                            title="評分失敗，點擊重試"
+                          >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            失敗，重試
+                          </button>
+                        )}
                       </div>
                     </div>
 
@@ -586,7 +828,7 @@ export default function GmailScanner({
                           </div>
                           
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-450">姓名: (可手動校正)</label>
+                            <label className="text-[10px] text-slate-400">姓名: (可手動校正)</label>
                             <input
                               type="text"
                               value={msg.analysis.studentName}
@@ -596,7 +838,7 @@ export default function GmailScanner({
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-455 font-mono">學號: (可手動校正)</label>
+                            <label className="text-[10px] text-slate-400 font-mono">學號: (可手動校正)</label>
                             <input
                               type="text"
                               value={msg.analysis.studentId}
@@ -624,7 +866,7 @@ export default function GmailScanner({
                         <div className="md:col-span-8 flex flex-col justify-between space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-1.5 text-xs">
-                              <span className="font-semibold text-slate-705">本份得分:</span>
+                              <span className="font-semibold text-slate-700">本份得分:</span>
                               <input
                                 type="number"
                                 value={msg.analysis.score}
@@ -640,7 +882,7 @@ export default function GmailScanner({
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-455 block font-semibold">AI 建議教授回饋評語 (Traditional Chinese):</label>
+                            <label className="text-[10px] text-slate-400 block font-semibold">AI 建議教授回饋評語 (Traditional Chinese):</label>
                             <textarea
                               rows={3}
                               value={msg.analysis.feedback}

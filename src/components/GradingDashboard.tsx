@@ -33,22 +33,18 @@ export default function GradingDashboard({
   const assessments = currentCourse.assessments;
   const activeAssessment = assessments.find((a) => a.id === targetAsstId) || assessments[0];
 
-  // 1. Math formulas: Overall Weighted Score for each student
+  // 1. 目前累計加權分：實際已取得的加權分數（score×權重/100 加總），
+  //    未評/未繳的項目不計入（貢獻 0），不再除以已評權重做正規化。
+  //    學期末全部評分完、權重總和 100% 時，此值即為最終成績。
   const calculateWeightedGrade = (student: Student) => {
-    let totalWeightUsed = 0;
     let earnedPoints = 0;
-
     assessments.forEach((asst) => {
       const score = student.grades[asst.id];
       if (score != null) {
-        earnedPoints += (score * asst.weight);
-        totalWeightUsed += asst.weight;
+        earnedPoints += (score * asst.weight) / 100;
       }
     });
-
-    if (totalWeightUsed === 0) return 0;
-    // Normalize if weights don't sum to 100% yet
-    return Math.round((earnedPoints / totalWeightUsed) * 10) / 10;
+    return Math.round(earnedPoints * 10) / 10;
   };
 
   const studentWithFinals = students.map((s) => ({
@@ -154,7 +150,7 @@ ${currentCourse.semester} 課程助教組`;
         {/* Weighted final average */}
         <div className="bg-white p-5 border border-slate-200 shadow-sm flex flex-col justify-between h-32">
           <div>
-            <p className="text-slate-505 text-slate-505 text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">全班加權期末平均</p>
+            <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">全班平均累計加權分</p>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-bold text-blue-600 font-display">{finalClassAverage}</span>
               <span className="text-blue-500 text-xs">/ 100</span>
@@ -182,10 +178,10 @@ ${currentCourse.semester} 課程助教組`;
         {/* Target assessment submission rate */}
         <div className="bg-white p-5 border border-slate-200 shadow-sm flex flex-col justify-between h-32">
           <div>
-            <p className="text-slate-550 text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">主項繳交比率</p>
+            <p className="text-slate-500 text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">主項繳交比率</p>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-bold text-emerald-600 font-display">{submissionRate}%</span>
-              <span className="text-slate-450 text-slate-400 text-xs">({submittedCount}/{studentCount})</span>
+              <span className="text-slate-400 text-slate-400 text-xs">({submittedCount}/{studentCount})</span>
             </div>
           </div>
           <div className="w-full bg-slate-100 h-1 mt-3">
@@ -209,7 +205,7 @@ ${currentCourse.semester} 課程助教組`;
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-505">切換評估:</span>
+              <span className="text-xs text-slate-500">切換評估:</span>
               <select
                 value={targetAsstId}
                 onChange={(e) => setTargetAsstId(e.target.value)}

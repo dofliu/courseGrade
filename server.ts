@@ -1,9 +1,14 @@
 import express from "express";
 import path from "path";
 import fs from "fs/promises";
+import crypto from "crypto";
+import mammoth from "mammoth";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
+// 優先讀 .env.local（放本機機密，與 Vite 前端共用同一檔），再以 .env 補沒設到的值。
+// dotenv 預設不覆寫已存在的變數，所以先載入的 .env.local 具有較高優先序。
+dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 const app = express();
@@ -149,6 +154,231 @@ async function writeDB(data: any) {
 }
 
 /* ==========================================================================
+   GMAIL 離線暫存 (scan cache)
+   「讀取 Gmail」時一次把整批信件 metadata + 附件二進位下載到本機磁碟，
+   之後複查 / AI 評分 / 下次開啟都讀本機，不必再連 Gmail。
+   ========================================================================== */
+
+const GMAIL_CACHE_DIR = path.join(process.cwd(), "gmail_cache");
+const GMAIL_FILES_DIR = path.join(GMAIL_CACHE_DIR, "files");
+
+function safeKey(s: string) {
+  return String(s || "").replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+function gmailCachePath(courseId: string, assessmentId: string) {
+  return path.join(GMAIL_CACHE_DIR, `${safeKey(courseId)}__${safeKey(assessmentId)}.json`);
+}
+async function readGmailCache(courseId: string, assessmentId: string) {
+  try {
+    return JSON.parse(await fs.readFile(gmailCachePath(courseId, assessmentId), "utf-8"));
+  } catch {
+    return null;
+  }
+}
+async function writeGmailCache(courseId: string, assessmentId: string, data: any) {
+  await fs.mkdir(GMAIL_FILES_DIR, { recursive: true });
+  await fs.writeFile(gmailCachePath(courseId, assessmentId), JSON.stringify(data, null, 2), "utf-8");
+}
+
+// 共用的 Gemini 評分流程。可吃「檔案 base64（圖片/PDF）」或「擷取出來的純文字（.docx）」。
+async function gradeSubmissionWithGemini(opts: {
+  base64?: string;
+  mimeType?: string;
+  textContent?: string;
+  filename: string;
+  roster: any;
+  assessmentName: string;
+  rubric?: string;
+}) {
+  const { filename, roster, assessmentName, rubric } = opts;
+  const ai = getGeminiAI();
+
+  const systemPrompt = `You are an elite, highly precise university assistant built to grade assignments.
+You write exclusively in Traditional Chinese (繁體中文).
+You are evaluating the submitted file "${filename}" for the assessment "${assessmentName}".
+${rubric ? `\nThe instructor has provided the following grading rubric / criteria. You MUST grade strictly according to it (scoring weights, key points, and deduction rules):\n"""\n${rubric}\n"""\n` : ""}
+Your goal:
+1. Examine this custom assignment workspace submission.
+2. Verify if you can identify the student name, registration ID inside.
+3. Compare with the roster list: ${JSON.stringify(roster)}
+4. Determine the score (0 to 100), grading reasons, and constructive traditional Chinese feedback.
+5. In addition to grading, classify the email as "作業繳交" (Homework Submission) or other types.
+
+Return your response in clean JSON matching the target schema.`;
+
+  // 依輸入型態組 contents：文字檔走文字 part，圖片/PDF 走 inlineData
+  const contents: any[] = [];
+  if (opts.textContent) {
+    contents.push(`以下是學生繳交檔案「${filename}」由 Word(.docx) 擷取出的文字內容，請據此評分：\n\n${opts.textContent}`);
+  } else {
+    contents.push({ inlineData: { mimeType: opts.mimeType || "image/jpeg", data: opts.base64 || "" } });
+  }
+  contents.push(`Grading student submission file "${filename}". Verify details, evaluate quality, and generate feedback.`);
+
+  const result = await ai.models.generateContent({
+    model: "gemini-3.5-flash",
+    contents,
+    config: {
+      systemInstruction: systemPrompt,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          studentName: { type: Type.STRING, description: "Identified student name that best matches the roster list." },
+          studentId: { type: Type.STRING, description: "Detected pupil index / student ID key." },
+          score: { type: Type.INTEGER, description: "Fair TA score from 0 to 100." },
+          feedback: { type: Type.STRING, description: "TA analysis review remarks in Taiwan Traditional Chinese." },
+          confidence: { type: Type.NUMBER, description: "Quality estimation confidence from 0.0 to 1.0." },
+          keyPoints: {
+            type: Type.ARRAY,
+            description: "List of key-points and notable concepts summarized from the student's submission.",
+            items: { type: Type.STRING },
+          },
+        },
+        required: ["studentName", "score", "feedback"],
+      },
+    },
+  });
+
+  return JSON.parse(result.text || "{}");
+}
+
+// 正規化字串以利比對：轉小寫、去掉空白與常見分隔符號
+function normalizeForMatch(s: string) {
+  return String(s || "").toLowerCase().replace(/[\s\-_.()／/]/g, "");
+}
+
+// 從多個訊號（主旨、寄件者名、內文、附件檔名、信箱）找出對應的修課學生。
+// 優先序：信箱完全相符 → 學號出現 → 完整姓名出現。學生常漏寫資訊，故多訊號交叉比對。
+function matchStudentFromSignals(
+  roster: any[],
+  opts: { subject: string; senderName: string; fromEmail: string; bodyExcerpt: string; filenames: string[] }
+): { student: any | null; by: "email" | "studentId" | "name" | null } {
+  if (!Array.isArray(roster) || roster.length === 0) return { student: null, by: null };
+
+  // 1) 寄件信箱完全相符（最高信心）
+  const byEmail = roster.find((s) => s.email && s.email.toLowerCase() === opts.fromEmail.toLowerCase());
+  if (byEmail) return { student: byEmail, by: "email" };
+
+  const rawHay = [opts.subject, opts.senderName, opts.bodyExcerpt, ...(opts.filenames || [])].join("  ");
+  const normHay = normalizeForMatch(rawHay);
+
+  // 2) 學號出現在主旨／寄件者名／內文／附件檔名（學號最具辨識度）
+  const byId = roster.find((s) => {
+    const id = normalizeForMatch(s.studentId);
+    return id.length >= 4 && normHay.includes(id);
+  });
+  if (byId) return { student: byId, by: "studentId" };
+
+  // 3) 完整姓名（≥2 字）出現於任一訊號
+  const byName = roster.find((s) => s.name && String(s.name).length >= 2 && rawHay.includes(s.name));
+  if (byName) return { student: byName, by: "name" };
+
+  return { student: null, by: null };
+}
+
+// 列出並解析 Gmail 信件（不下載附件）— 給 pull 端點使用
+async function listAndParseGmailMessages(accessToken: string, query: string, labelIds: any, roster: any) {
+  const searchQuery = encodeURIComponent(query || "");
+  let listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${searchQuery}&maxResults=20`;
+  if (Array.isArray(labelIds)) {
+    for (const id of labelIds) listUrl += `&labelIds=${encodeURIComponent(id)}`;
+  }
+
+  const listResponse = await fetch(listUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!listResponse.ok) {
+    throw new Error("Gmail 列信失敗: " + (await listResponse.text()));
+  }
+  const listData = (await listResponse.json()) as any;
+  const messageRefs = listData.messages || [];
+
+  const results: any[] = [];
+  for (const msgRef of messageRefs) {
+    const msgResponse = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${msgRef.id}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!msgResponse.ok) continue;
+
+    const msg = (await msgResponse.json()) as any;
+    const headers = msg.payload?.headers || [];
+    const subject = headers.find((h: any) => h.name.toLowerCase() === "subject")?.value || "(無主旨)";
+    const sender = headers.find((h: any) => h.name.toLowerCase() === "from")?.value || "(未知寄件者)";
+    const date = headers.find((h: any) => h.name.toLowerCase() === "date")?.value || "";
+
+    const emailMatch = sender.match(/<([^>]+)>/) || [null, sender];
+    const fromEmail = emailMatch[1]?.trim() || sender.trim();
+    // 寄件者顯示名稱（"朱文明" <...> → 朱文明）
+    const senderNameMatch = sender.match(/^\s*"?([^"<]+?)"?\s*</);
+    const senderName = senderNameMatch ? senderNameMatch[1].trim() : "";
+
+    let bodyText = "";
+    const estimateBody = (part: any): string => {
+      if (part.mimeType === "text/plain" && part.body?.data) {
+        return Buffer.from(part.body.data, "base64").toString("utf-8");
+      }
+      if (part.parts) {
+        for (const sub of part.parts) {
+          const found = estimateBody(sub);
+          if (found) return found;
+        }
+      }
+      return "";
+    };
+    bodyText = estimateBody(msg.payload || {});
+
+    const attachments: any[] = [];
+    const collectAttachments = (part: any) => {
+      if (part.filename && part.body?.attachmentId) {
+        attachments.push({ id: part.body.attachmentId, filename: part.filename, mimeType: part.mimeType, size: part.body.size });
+      }
+      if (part.parts) for (const sub of part.parts) collectAttachments(sub);
+    };
+    collectAttachments(msg.payload || {});
+
+    // 多訊號配對：信箱 → 學號 → 姓名（從主旨/寄件者名/內文/附件檔名找）
+    const { student: matchedStudent, by: matchedBy } = matchStudentFromSignals(roster || [], {
+      subject,
+      senderName,
+      fromEmail,
+      bodyExcerpt: bodyText,
+      filenames: attachments.map((a) => a.filename),
+    });
+
+    results.push({
+      messageId: msg.id,
+      subject,
+      sender,
+      fromEmail,
+      date,
+      bodyExcerpt: bodyText.slice(0, 300),
+      attachments,
+      matchedStudent: matchedStudent || null,
+      matchedBy,
+    });
+  }
+  return results;
+}
+
+// 從 Gmail 下載單一附件二進位並存到本機磁碟，回傳檔名（相對 GMAIL_FILES_DIR）
+async function downloadAttachmentToDisk(accessToken: string, courseId: string, assessmentId: string, messageId: string, att: any) {
+  const url = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}/attachments/${att.id}`;
+  const r = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!r.ok) throw new Error(await r.text());
+  const d = (await r.json()) as any;
+  const normalBase64 = (d.data || "").replace(/-/g, "+").replace(/_/g, "/");
+  const buf = Buffer.from(normalBase64, "base64");
+  await fs.mkdir(GMAIL_FILES_DIR, { recursive: true });
+  // 用短雜湊當檔名 — Gmail 的 attachmentId 長達數百字元，直接當檔名會超過
+  // Windows 260 字元路徑上限導致 ENOENT 寫檔失敗。
+  const localName = crypto
+    .createHash("sha1")
+    .update(`${courseId}|${assessmentId}|${messageId}|${att.id}`)
+    .digest("hex");
+  await fs.writeFile(path.join(GMAIL_FILES_DIR, localName), buf);
+  return localName;
+}
+
+/* ==========================================================================
    EXPRESS REST ENDPOINTS
    ========================================================================== */
 
@@ -179,7 +409,7 @@ app.post("/api/db", async (req, res) => {
 // 3. AI analysis of single file (for local folder file upload)
 app.post("/api/analyze-file", async (req, res) => {
   try {
-    const { fileContent, mimeType, fileName, roster, assessmentName, description } = req.body;
+    const { fileContent, mimeType, fileName, roster, assessmentName, description, rubric } = req.body;
 
     if (!fileContent) {
       return res.status(400).json({ error: "Missing file content" });
@@ -192,7 +422,7 @@ app.post("/api/analyze-file", async (req, res) => {
 Your grading is rigorous, fair, and encouraging. You speak and write exclusively in traditional Chinese (繁體中文).
 
 You are grading "${assessmentName}" (Description: ${description || "No specific details"}).
-
+${rubric ? `\nThe instructor has provided the following grading rubric / criteria. You MUST grade strictly according to it (scoring weights, key points, and deduction rules):\n"""\n${rubric}\n"""\n` : ""}
 Your job is to:
 1. Examine the submitted file (might be an image, screenshot, PDF, scanned sheet, or text document).
 2. Scan the file content or filename to determine the student name or student ID.
@@ -258,19 +488,55 @@ Please identify the student, grade their work out of 100, and provide custom rev
   }
 });
 
+// 3.5 列出使用者的 Gmail 信件匣（標籤），讓老師先挑要掃描的資料夾再縮小範圍
+app.post("/api/gmail/labels", async (req, res) => {
+  try {
+    const { accessToken } = req.body;
+    if (!accessToken) {
+      return res.status(401).json({ error: "需要 Google OAuth access token。" });
+    }
+
+    const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/labels", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+
+    if (!r.ok) {
+      return res.status(r.status).json({ error: "讀取 Gmail 標籤失敗: " + (await r.text()) });
+    }
+
+    const data = (await r.json()) as any;
+    const labels = (data.labels || []).map((l: any) => ({
+      id: l.id,
+      name: l.name,
+      type: l.type, // "system" | "user"
+    }));
+    res.json({ labels });
+  } catch (e: any) {
+    console.error("Gmail labels error:", e);
+    res.status(500).json({ error: "Failed to list Gmail labels: " + e.message });
+  }
+});
+
 // 4. Scan Gmail for Homework submissions
-// Expects: accessToken in body, query (search query), and assessment parameters
+// Expects: accessToken in body, query (search query), optional labelIds, and assessment parameters
 app.post("/api/gmail/scan", async (req, res) => {
   try {
-    const { accessToken, query, roster, assessmentName } = req.body;
+    const { accessToken, query, roster, assessmentName, labelIds } = req.body;
 
     if (!accessToken) {
       return res.status(401).json({ error: "Google OAuth access token is required for Gmail scanning." });
     }
 
     // Call Gmail API: search messages
-    const searchQuery = encodeURIComponent(query || "subject:作業");
-    const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${searchQuery}&maxResults=10`;
+    const searchQuery = encodeURIComponent(query || "");
+    let listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${searchQuery}&maxResults=20`;
+
+    // 限定只搜尋指定的信件匣（label），避免一次撈到整個信箱
+    if (Array.isArray(labelIds)) {
+      for (const id of labelIds) {
+        listUrl += `&labelIds=${encodeURIComponent(id)}`;
+      }
+    }
 
     const listResponse = await fetch(listUrl, {
       headers: {
@@ -371,7 +637,7 @@ app.post("/api/gmail/scan", async (req, res) => {
 // 5. Download and analyze single Gmail Attachment
 app.post("/api/gmail/analyze-attachment", async (req, res) => {
   try {
-    const { accessToken, messageId, attachmentId, mimeType, filename, roster, assessmentName } = req.body;
+    const { accessToken, messageId, attachmentId, mimeType, filename, roster, assessmentName, rubric } = req.body;
 
     if (!accessToken || !messageId || !attachmentId) {
       return res.status(400).json({ error: "Missing required arguments for attachment download" });
@@ -402,7 +668,7 @@ app.post("/api/gmail/analyze-attachment", async (req, res) => {
     const systemPrompt = `You are an elite, highly precise university assistant built to grade assignments.
 You write exclusively in Traditional Chinese (繁體中文).
 You are evaluating the submitted file "${filename}" for the assessment "${assessmentName}".
-
+${rubric ? `\nThe instructor has provided the following grading rubric / criteria. You MUST grade strictly according to it (scoring weights, key points, and deduction rules):\n"""\n${rubric}\n"""\n` : ""}
 Your goal:
 1. Examine this custom assignment workspace submission.
 2. Verify if you can identify the student name, registration ID inside.
@@ -472,6 +738,136 @@ Return your response in clean JSON matching the target schema.`;
   } catch (e: any) {
     console.error("Gmail attachment analyze error:", e);
     res.status(500).json({ error: "Attachment AI grading failed: " + e.message });
+  }
+});
+
+// 6. PULL：掃描 Gmail 並把整批信件 + 所有附件下載到本機磁碟，存成 manifest（需 token，一次性）
+app.post("/api/gmail/pull", async (req, res) => {
+  try {
+    const { accessToken, query, roster, labelIds, courseId, assessmentId } = req.body;
+    if (!accessToken) return res.status(401).json({ error: "需要 Google OAuth access token。" });
+    if (!courseId || !assessmentId) return res.status(400).json({ error: "缺少 courseId / assessmentId。" });
+
+    const parsed = await listAndParseGmailMessages(accessToken, query, labelIds, roster || []);
+
+    // 逐封下載附件到磁碟
+    const messages: any[] = [];
+    for (const m of parsed) {
+      const cachedAttachments: any[] = [];
+      for (const att of m.attachments) {
+        try {
+          const localFile = await downloadAttachmentToDisk(accessToken, courseId, assessmentId, m.messageId, att);
+          cachedAttachments.push({ id: att.id, filename: att.filename, mimeType: att.mimeType, size: att.size, localFile });
+        } catch (err: any) {
+          console.warn("附件下載失敗:", att.filename, err.message);
+          cachedAttachments.push({ id: att.id, filename: att.filename, mimeType: att.mimeType, size: att.size, localFile: null });
+        }
+      }
+      messages.push({ ...m, attachments: cachedAttachments, status: "idle" });
+    }
+
+    const manifest = { courseId, assessmentId, pulledAt: new Date().toISOString(), messages };
+    await writeGmailCache(courseId, assessmentId, manifest);
+    res.json(manifest);
+  } catch (e: any) {
+    console.error("Gmail pull error:", e);
+    res.status(500).json({ error: "讀取並下載 Gmail 失敗: " + e.message });
+  }
+});
+
+// 7. 讀取本機暫存批次（免 token）— 開啟頁面 / 切換課程項目時自動載入上次拉取的結果
+app.get("/api/gmail/cache", async (req, res) => {
+  try {
+    const { courseId, assessmentId } = req.query as any;
+    if (!courseId || !assessmentId) return res.status(400).json({ error: "缺少 courseId / assessmentId。" });
+    const cache = await readGmailCache(String(courseId), String(assessmentId));
+    res.json(cache || { courseId, assessmentId, pulledAt: null, messages: [] });
+  } catch (e: any) {
+    res.status(500).json({ error: "讀取暫存失敗: " + e.message });
+  }
+});
+
+// 8. 儲存本機暫存批次（免 token）— 前端在手動校正、批次評分後把最新 messages 寫回
+app.post("/api/gmail/cache", async (req, res) => {
+  try {
+    const { courseId, assessmentId, pulledAt, messages } = req.body;
+    if (!courseId || !assessmentId) return res.status(400).json({ error: "缺少 courseId / assessmentId。" });
+    // 若前端沒帶 pulledAt，保留既有 manifest 的拉取時間，避免被覆蓋成 null
+    const existing = await readGmailCache(courseId, assessmentId);
+    const keptPulledAt = pulledAt || existing?.pulledAt || null;
+    await writeGmailCache(courseId, assessmentId, { courseId, assessmentId, pulledAt: keptPulledAt, messages: messages || [] });
+    res.json({ success: true });
+  } catch (e: any) {
+    res.status(500).json({ error: "儲存暫存失敗: " + e.message });
+  }
+});
+
+// 9. 用本機暫存的附件做 AI 評分（免 token）— 評分結果回寫 manifest
+app.post("/api/gmail/analyze-cached", async (req, res) => {
+  try {
+    const { courseId, assessmentId, messageId, roster, assessmentName, rubric } = req.body;
+    if (!courseId || !assessmentId || !messageId) {
+      return res.status(400).json({ error: "缺少 courseId / assessmentId / messageId。" });
+    }
+
+    const cache = await readGmailCache(courseId, assessmentId);
+    if (!cache) return res.status(404).json({ error: "找不到本機暫存批次，請先點「讀取 Gmail」。" });
+
+    const msg = (cache.messages || []).find((m: any) => m.messageId === messageId);
+    if (!msg) return res.status(404).json({ error: "暫存中找不到該封信件。" });
+
+    const att = (msg.attachments || []).find((a: any) => a.localFile);
+    if (!att) return res.status(400).json({ error: "此信件沒有已下載的本機附件可分析。" });
+
+    const buf = await fs.readFile(path.join(GMAIL_FILES_DIR, att.localFile));
+    const mt = String(att.mimeType || "").toLowerCase();
+    const fnameLower = String(att.filename || "").toLowerCase();
+
+    // 標記為不支援、回寫 manifest、回傳友善訊息（前端會略過、不重試）
+    const markUnsupported = async (reason: string) => {
+      msg.status = "unsupported";
+      msg.unsupported = true;
+      await writeGmailCache(courseId, assessmentId, cache);
+      return res.json({ success: false, unsupported: true, filename: att.filename, error: reason });
+    };
+
+    let parsed: any;
+    if (mt.includes("wordprocessingml") || fnameLower.endsWith(".docx")) {
+      // Word .docx → 擷取純文字後送 Gemini（Gemini 不吃 .docx 原檔）
+      let text = "";
+      try {
+        const r = await mammoth.extractRawText({ buffer: buf });
+        text = r.value || "";
+      } catch {
+        return await markUnsupported("此 .docx 無法解析（檔案可能損壞），請改交 PDF 或手動評分。");
+      }
+      if (!text.trim()) {
+        return await markUnsupported("此 .docx 擷取不到文字內容（可能是純圖片），請改交 PDF 或手動評分。");
+      }
+      parsed = await gradeSubmissionWithGemini({ textContent: text, filename: att.filename, roster: roster || [], assessmentName: assessmentName || "作業", rubric });
+    } else if (mt.startsWith("image/") || mt === "application/pdf" || mt.startsWith("text/")) {
+      const base64 = buf.toString("base64");
+      parsed = await gradeSubmissionWithGemini({ base64, mimeType: att.mimeType, filename: att.filename, roster: roster || [], assessmentName: assessmentName || "作業", rubric });
+    } else {
+      return await markUnsupported(`格式（${att.mimeType || att.filename}）無法由 AI 直接評分，請轉成 PDF 或手動輸入分數。`);
+    }
+
+    // 回寫 manifest，讓 AI 結果持久化（下次開啟仍在）
+    msg.analysis = {
+      studentName: parsed.studentName || "",
+      studentId: parsed.studentId || "",
+      score: parsed.score != null ? parsed.score : 80,
+      feedback: parsed.feedback || "",
+      confidence: parsed.confidence != null ? parsed.confidence : 0.85,
+      keyPoints: parsed.keyPoints || [],
+    };
+    msg.status = "completed";
+    await writeGmailCache(courseId, assessmentId, cache);
+
+    res.json({ success: true, filename: att.filename, ...parsed });
+  } catch (e: any) {
+    console.error("Gmail cached analyze error:", e);
+    res.status(500).json({ error: "本機附件 AI 評分失敗: " + e.message });
   }
 });
 

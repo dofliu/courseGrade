@@ -549,7 +549,7 @@ export default function CourseSetup({
                       handleDeleteCourse(course.id);
                     }}
                     className={`p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500 hover:text-white transition ${
-                      isSelected ? "text-slate-400" : "text-slate-450"
+                      isSelected ? "text-slate-400" : "text-slate-400"
                     }`}
                   >
                     <Trash2 className="w-4 h-4" />
@@ -617,7 +617,7 @@ export default function CourseSetup({
                 {currentCourse.assessments.map((asst, index) => (
                   <div
                     key={asst.id}
-                    className="p-4 rounded bg-slate-50 border border-slate-200 hover:border-slate-350 transition relative group space-y-3"
+                    className="p-4 rounded bg-slate-50 border border-slate-200 hover:border-slate-300 transition relative group space-y-3"
                   >
                     <div className="flex items-center gap-2">
                        <select
@@ -665,6 +665,20 @@ export default function CourseSetup({
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
+
+                    {/* AI 評分標準 — 評分時會一併送給 Gemini 當依據 */}
+                    <div className="pt-1">
+                      <label className="text-[10px] text-slate-500 font-semibold block mb-1">
+                        AI 評分標準 / 配分依據（選填）
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={asst.rubric || ""}
+                        onChange={(e) => handleUpdateAssessment(index, { rubric: e.target.value })}
+                        placeholder="例如：滿分 100。正確性 60%、推導完整 30%、表達清晰 10%；未寫時間/空間複雜度分析各扣 10 分。"
+                        className="w-full text-[11px] p-2 bg-white border border-slate-200 rounded outline-none focus:border-blue-500 text-slate-700 leading-relaxed font-sans"
+                      />
+                    </div>
                   </div>
                 ))}
               </div>
@@ -684,7 +698,7 @@ export default function CourseSetup({
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
                 {/* Custom Single additions */}
-                <div className="p-4 rounded border border-dashed border-slate-250 bg-slate-50 space-y-3 flex flex-col justify-between">
+                <div className="p-4 rounded border border-dashed border-slate-200 bg-slate-50 space-y-3 flex flex-col justify-between">
                   <div>
                     <div className="text-xs font-semibold text-slate-700 uppercase tracking-wider">手動單筆新增</div>
                     <div className="grid grid-cols-2 gap-2 mt-3">
@@ -788,7 +802,7 @@ export default function CourseSetup({
                     </div>
 
                     {!excelFileName ? (
-                      <label className="mt-3 border-2 border-dashed border-slate-250 bg-white hover:border-blue-500 hover:bg-slate-50 transition cursor-pointer p-4 h-32 flex flex-col items-center justify-center text-center rounded-sm">
+                      <label className="mt-3 border-2 border-dashed border-slate-200 bg-white hover:border-blue-500 hover:bg-slate-50 transition cursor-pointer p-4 h-32 flex flex-col items-center justify-center text-center rounded-sm">
                         <FileUp className="w-8 h-8 text-slate-400 mb-1.5" />
                         <span className="text-[11px] font-bold text-slate-700">選擇或拖曳檔案至此</span>
                         <span className="text-[9px] text-slate-400 mt-0.5">支援 .xlsx, .xls 或 .csv</span>
@@ -805,7 +819,7 @@ export default function CourseSetup({
                       </label>
                     ) : (
                       <div className="mt-3 space-y-2">
-                        <div className="flex items-center justify-between bg-blue-50 border border-blue-150 p-2 rounded text-[11px]">
+                        <div className="flex items-center justify-between bg-blue-50 border border-blue-200 p-2 rounded text-[11px]">
                           <span className="font-semibold text-blue-900 truncate max-w-[130px]" title={excelFileName}>
                             📄 {excelFileName}
                           </span>
@@ -857,7 +871,7 @@ export default function CourseSetup({
               <div className="mt-4 border border-slate-200 rounded-sm overflow-hidden max-h-80 overflow-y-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
-                    <tr className="bg-slate-50 text-slate-650 text-slate-605 text-slate-600 text-xs font-medium border-b border-slate-200">
+                    <tr className="bg-slate-50 text-slate-600 text-slate-600 text-slate-600 text-xs font-medium border-b border-slate-200">
                       <th className="p-3">學號</th>
                       <th className="p-3">姓名</th>
                       <th className="p-3">Gmail / Email</th>
@@ -875,12 +889,12 @@ export default function CourseSetup({
                       currentCourse.students.map((student) => (
                         <tr key={student.id} className="hover:bg-slate-50">
                           <td className="p-3 font-mono font-medium text-slate-700">{student.studentId}</td>
-                          <td className="p-3 font-semibold text-slate-850">{student.name}</td>
+                          <td className="p-3 font-semibold text-slate-800">{student.name}</td>
                           <td className="p-3 text-slate-400">{student.email}</td>
                           <td className="p-3 text-right">
                             <button
                               onClick={() => handleDeleteStudent(student.id)}
-                              className="text-slate-450 hover:text-red-500 p-1 rounded hover:bg-red-50 transition"
+                              className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50 transition"
                               title="移出此生"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
