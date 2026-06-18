@@ -1,0 +1,6 @@
+{
+  "name": "學生課程評分系統",
+  "description": "整合 AI 檔案分析與 Gmail 自動化的學生智慧評分助手，支援批次評分與未交統計。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
