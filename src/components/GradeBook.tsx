@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import * as XLSX from "xlsx";
 import { Course, Student, AssessmentItem } from "../types";
+import { accumulatedWeighted } from "../lib/grades";
 import { Download, Save, Search, Filter, Edit3, Check, X, FileSpreadsheet, MessageSquare, ChevronDown, ChevronUp, Upload, FileUp } from "lucide-react";
 
 interface GradeBookProps {
@@ -44,18 +45,8 @@ export default function GradeBook({
 
   const { students, assessments } = currentCourse;
 
-  // 目前累計加權分：實際已取得的加權分數（score×權重/100 加總），未評/未繳不計入。
-  // 不再除以已評權重正規化；學期末全部評完即為最終成績。
-  const calculateWeightedGrade = (student: Student) => {
-    let earnedPoints = 0;
-    assessments.forEach((asst) => {
-      const score = student.grades[asst.id];
-      if (score != null) {
-        earnedPoints += (score * asst.weight) / 100;
-      }
-    });
-    return Math.round(earnedPoints * 10) / 10;
-  };
+  // 目前累計加權分（共用邏輯見 lib/grades）
+  const calculateWeightedGrade = (student: Student) => accumulatedWeighted(student.grades, assessments);
 
   // Perform filtering
   const filteredStudents = students.filter((s) => {

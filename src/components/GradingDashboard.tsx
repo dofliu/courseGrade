@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Course, Student, AssessmentItem } from "../types";
+import { accumulatedWeighted } from "../lib/grades";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Award, CheckCircle, HelpCircle, Users, BarChart3, Mail, Copy, Check, FileDown, BookOpen, AlertCircle } from "lucide-react";
 
@@ -33,19 +34,8 @@ export default function GradingDashboard({
   const assessments = currentCourse.assessments;
   const activeAssessment = assessments.find((a) => a.id === targetAsstId) || assessments[0];
 
-  // 1. 目前累計加權分：實際已取得的加權分數（score×權重/100 加總），
-  //    未評/未繳的項目不計入（貢獻 0），不再除以已評權重做正規化。
-  //    學期末全部評分完、權重總和 100% 時，此值即為最終成績。
-  const calculateWeightedGrade = (student: Student) => {
-    let earnedPoints = 0;
-    assessments.forEach((asst) => {
-      const score = student.grades[asst.id];
-      if (score != null) {
-        earnedPoints += (score * asst.weight) / 100;
-      }
-    });
-    return Math.round(earnedPoints * 10) / 10;
-  };
+  // 1. 目前累計加權分（共用邏輯見 lib/grades）
+  const calculateWeightedGrade = (student: Student) => accumulatedWeighted(student.grades, assessments);
 
   const studentWithFinals = students.map((s) => ({
     ...s,

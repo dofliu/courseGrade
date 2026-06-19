@@ -1,4 +1,5 @@
 import { Course, Student } from "../types";
+import { accumulatedWeighted, hasAnyGrade, findFinalAssessment, neededOnFinal as calcNeededOnFinal } from "../lib/grades";
 import { ClipboardList, CheckCircle2, Clock, XCircle, Lock } from "lucide-react";
 
 interface SubmissionOverviewProps {
@@ -34,48 +35,15 @@ export default function SubmissionOverview({
     return "missing";
   };
 
-  // 目前累計加權分：實際已取得的加權分數（score×權重/100 加總），未評/未繳以 0 計、不正規化。
-  const calcWeighted = (s: Student): number | null => {
-    let earned = 0;
-    let any = false;
-    assessments.forEach((a) => {
-      const sc = s.grades[a.id];
-      if (sc != null) {
-        earned += (sc * a.weight) / 100;
-        any = true;
-      }
-    });
-    return any ? Math.round(earned * 10) / 10 : null;
-  };
+  // 目前累計加權分（共用邏輯見 lib/grades；無任何分數則回 null 以顯示「—」）
+  const calcWeighted = (s: Student): number | null =>
+    hasAnyGrade(s.grades, assessments) ? accumulatedWeighted(s.grades, assessments) : null;
 
-  // 找出「期末考」項目：優先用 type=final，否則用名稱（含「期末」「考」且非「加分」）
   const PASS_MARK = 60;
-  const finalAsst =
-    assessments.find((a) => a.type === "final") ||
-    assessments.find((a) => a.name.includes("期末") && a.name.includes("考") && !a.name.includes("加分")) ||
-    null;
+  const finalAsst = findFinalAssessment(assessments);
 
-  // 期末考要考幾分才能讓「累計加權分」達及格門檻
-  const neededOnFinal = (
-    s: Student
-  ): { kind: "nofinal" | "done" | "passed" | "need" | "impossible"; need?: number } => {
-    if (!finalAsst) return { kind: "nofinal" };
-    if (s.grades[finalAsst.id] != null) return { kind: "done" }; // 期末已考過
-
-    // 排除期末考本身，把其他已評項目的加權分加總（已銀行的分數）
-    let banked = 0;
-    assessments.forEach((a) => {
-      if (a.id === finalAsst.id) return;
-      const sc = s.grades[a.id];
-      if (sc != null) banked += (sc * a.weight) / 100;
-    });
-    if (banked >= PASS_MARK) return { kind: "passed" }; // 不靠期末已及格
-
-    const fw = finalAsst.weight / 100;
-    const need = fw > 0 ? (PASS_MARK - banked) / fw : Infinity;
-    if (need > 100) return { kind: "impossible", need: Math.ceil(need) };
-    return { kind: "need", need: Math.ceil(need) };
-  };
+  // 期末考要考幾分才能讓「累計加權分」達及格門檻（共用邏輯見 lib/grades）
+  const neededOnFinal = (s: Student) => calcNeededOnFinal(s.grades, assessments, finalAsst, PASS_MARK);
 
   // 每個項目（欄）的繳交統計
   const columnStats = assessments.map((a) => {

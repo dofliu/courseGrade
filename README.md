@@ -37,6 +37,7 @@ npm install
 ### 3. 啟動
 ```bash
 npm run dev      # http://localhost:3000
+npm test         # 執行單元測試（Vitest）
 ```
 
 > 只用「資料夾批次 / 成績簿 / 繳交總覽 / 儀表板」的話只需要 `GEMINI_API_KEY`；
