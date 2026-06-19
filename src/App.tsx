@@ -14,6 +14,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "folder" | "gmail" | "gradebook" | "submissions">("dashboard");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [saveError, setSaveError] = useState<string | null>(null); // 儲存失敗時顯示，避免「以為存到了其實沒存」
 
   // Load database on startup from Express backend
   useEffect(() => {
@@ -47,9 +48,14 @@ export default function App() {
         },
         body: JSON.stringify(nextState),
       });
-      if (!response.ok) throw new Error("Could not persist database to server storage.");
-    } catch (e) {
+      if (!response.ok) {
+        const obj = await response.json().catch(() => ({}));
+        throw new Error(obj.error || "伺服器未能儲存資料");
+      }
+      setSaveError(null); // 成功 → 清除先前的錯誤提示
+    } catch (e: any) {
       console.error("Database save failed.", e);
+      setSaveError(e?.message || "儲存失敗，請確認伺服器是否運作");
     } finally {
       setIsSaving(false);
     }
@@ -338,6 +344,18 @@ export default function App() {
 
           </div>
         </header>
+
+        {/* 儲存失敗警示：避免使用者「以為存到了、其實沒存到」 */}
+        {saveError && (
+          <div className="bg-red-50 border-b border-red-200 px-4 sm:px-8 py-2.5 flex items-start gap-2">
+            <Check className="w-4 h-4 text-red-500 mt-0.5 rotate-45 flex-shrink-0" />
+            <div className="flex-1 text-xs text-red-700 leading-relaxed">
+              <span className="font-bold">⚠ 儲存失敗：</span>{saveError}
+              <span className="block text-[11px] text-red-500">您剛才的變更可能沒存到伺服器。請確認 dev server 是否運作，再重新操作一次以觸發儲存。</span>
+            </div>
+            <button onClick={() => setSaveError(null)} className="text-red-400 hover:text-red-600 text-xs font-semibold flex-shrink-0">關閉</button>
+          </div>
+        )}
 
         {/* VIEWPORT CONTROLLER CONTENT AREA */}
         <div className="flex-1 p-4 sm:p-8 overflow-y-auto">

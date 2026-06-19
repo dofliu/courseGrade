@@ -136,21 +136,108 @@ const DEFAULT_DB = {
   ]
 };
 
-// Thread-safe DB reader helper
-async function readDB() {
+/* ──────────────────────────────────────────────────────────────────────────
+   DB 安全儲存：原子寫入 + 自動備份 + 防呆驗證
+   目標：絕不因為單次讀／寫失敗而弄丟既有成績資料。
+   ────────────────────────────────────────────────────────────────────────── */
+const DB_TMP = DB_FILE + ".tmp";
+const DB_BACKUP_DIR = path.join(process.cwd(), "backups");
+const BACKUP_KEEP = 50;                          // 最多保留幾份備份
+const BACKUP_MIN_INTERVAL_MS = 3 * 60 * 1000;    // 同一份至少間隔 3 分鐘才再備份（避免每次改分都備份）
+
+// 基本結構驗證：合法的 DB 一定有 courses 陣列，且每門課有 id / students / assessments
+function isValidDb(data: any): boolean {
+  if (!data || !Array.isArray(data.courses)) return false;
+  return data.courses.every(
+    (c: any) => c && typeof c.id === "string" && Array.isArray(c.students) && Array.isArray(c.assessments)
+  );
+}
+
+async function listBackups(): Promise<string[]> {
   try {
-    const content = await fs.readFile(DB_FILE, "utf-8");
-    return JSON.parse(content);
-  } catch (error) {
-    // If not exists, write defaults and return
-    await fs.writeFile(DB_FILE, JSON.stringify(DEFAULT_DB, null, 2), "utf-8");
-    return DEFAULT_DB;
+    return (await fs.readdir(DB_BACKUP_DIR))
+      .filter((f) => f.startsWith("db-") && f.endsWith(".json"))
+      .sort();
+  } catch {
+    return [];
   }
 }
 
-// Thread-safe DB writer helper
+// 從最新一份「合法」備份還原（讀檔毀損時的救命稻草）
+async function tryRestoreFromBackup(): Promise<any | null> {
+  const files = (await listBackups()).reverse();
+  for (const f of files) {
+    try {
+      const data = JSON.parse(await fs.readFile(path.join(DB_BACKUP_DIR, f), "utf-8"));
+      if (isValidDb(data)) {
+        console.warn(`[DB] db.json 無法解析，已從備份還原：${f}`);
+        return data;
+      }
+    } catch {
+      /* 試下一份 */
+    }
+  }
+  return null;
+}
+
+// 覆寫前先備份目前的 db.json（節流 + 修剪），保住「上一個好版本」
+async function backupCurrentDB() {
+  try {
+    await fs.access(DB_FILE);
+  } catch {
+    return; // 沒有現檔（首次執行）就不用備份
+  }
+  try {
+    await fs.mkdir(DB_BACKUP_DIR, { recursive: true });
+    const existing = await listBackups();
+    if (existing.length > 0) {
+      const newest = existing[existing.length - 1];
+      const stat = await fs.stat(path.join(DB_BACKUP_DIR, newest));
+      if (Date.now() - stat.mtimeMs < BACKUP_MIN_INTERVAL_MS) return; // 太近，跳過
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    await fs.copyFile(DB_FILE, path.join(DB_BACKUP_DIR, `db-${stamp}.json`));
+    const after = await listBackups();
+    for (const f of after.slice(0, Math.max(0, after.length - BACKUP_KEEP))) {
+      await fs.unlink(path.join(DB_BACKUP_DIR, f)).catch(() => {});
+    }
+  } catch (e: any) {
+    console.warn("[DB] 備份失敗（不影響存檔）：", e.message);
+  }
+}
+
+// 讀取 DB。檔案不存在 → 建預設；檔案毀損 → 絕不覆蓋原檔，改從備份還原。
+async function readDB() {
+  let content: string;
+  try {
+    content = await fs.readFile(DB_FILE, "utf-8");
+  } catch (e: any) {
+    if (e.code === "ENOENT") {
+      await writeDB(DEFAULT_DB); // 首次執行才建立預設
+      return DEFAULT_DB;
+    }
+    throw e; // 權限等其他讀取錯誤 → 不亂寫
+  }
+  try {
+    const data = JSON.parse(content);
+    if (!isValidDb(data)) throw new Error("schema invalid");
+    return data;
+  } catch {
+    const restored = await tryRestoreFromBackup();
+    if (restored) return restored;
+    // 無法還原也絕不覆蓋原檔，讓使用者能手動搶救
+    throw new Error("db.json 內容毀損且無可用備份；已保留原檔未動，請手動檢查 db.json 或 backups/ 目錄。");
+  }
+}
+
+// 原子寫入：備份舊檔 → 寫暫存檔 → rename 取代，避免寫到一半造成毀損。
 async function writeDB(data: any) {
-  await fs.writeFile(DB_FILE, JSON.stringify(data, null, 2), "utf-8");
+  if (!isValidDb(data)) {
+    throw new Error("拒絕寫入：資料結構不合法（缺 courses/students/assessments），保護現有成績不被覆蓋。");
+  }
+  await backupCurrentDB();
+  await fs.writeFile(DB_TMP, JSON.stringify(data, null, 2), "utf-8");
+  await fs.rename(DB_TMP, DB_FILE);
 }
 
 /* ==========================================================================
@@ -396,8 +483,15 @@ app.get("/api/db", async (req, res) => {
 app.post("/api/db", async (req, res) => {
   try {
     const data = req.body;
-    if (!data || !Array.isArray(data.courses)) {
-      return res.status(400).json({ error: "Invalid database schema provided." });
+    if (!isValidDb(data)) {
+      return res.status(400).json({ error: "資料結構不合法，未儲存（保護現有成績）。" });
+    }
+    // 防呆：避免用「空課程」覆蓋掉「現有有課程」的檔（多半是前端異常或誤觸）
+    if (data.courses.length === 0) {
+      const current = await readDB().catch(() => null);
+      if (current && Array.isArray(current.courses) && current.courses.length > 0) {
+        return res.status(409).json({ error: "拒絕以空白資料覆蓋現有課程（防呆）。如確定要清空，請手動處理 db.json。" });
+      }
     }
     await writeDB(data);
     res.json({ success: true, message: "Database saved successfully" });
@@ -869,6 +963,25 @@ app.post("/api/gmail/analyze-cached", async (req, res) => {
     console.error("Gmail cached analyze error:", e);
     res.status(500).json({ error: "本機附件 AI 評分失敗: " + e.message });
   }
+});
+
+/* ==========================================================================
+   全域錯誤防護：讓單一壞請求不會把整個 server 弄掛（避免 Failed to fetch）
+   ========================================================================== */
+
+// Express 路由意外丟錯時的最後防線（不讓未捕捉的例外冒泡終止程序）
+app.use((err: any, _req: any, res: any, _next: any) => {
+  console.error("[express error]", err);
+  if (res.headersSent) return;
+  res.status(500).json({ error: "伺服器內部錯誤：" + (err?.message || "未知錯誤") });
+});
+
+// 本機單人工具：存活優先於崩潰。記錄錯誤但不結束程序。
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
 });
 
 /* ==========================================================================
