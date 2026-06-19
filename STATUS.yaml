@@ -1,9 +1,9 @@
 name: EduGrade AI
 name_zh: 智慧評分助理
 category: edtech
-progress: 85
+progress: 86
 status: active
-last_updated: "2026-06-18"
+last_updated: "2026-06-19"
 next_milestone: "Gmail 多附件支援、及格門檻可設定、評分標準範本庫"
 technologies:
   - React

@@ -18,6 +18,7 @@ export default function FolderAnalyzer({
   const [fileQueue, setFileQueue] = useState<SimulatedUploadedFile[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [analyzedLogs, setAnalyzedLogs] = useState<string[]>([]);
+  const [skipGraded, setSkipGraded] = useState(true); // 已評分（該生該項目已有分數）就略過、不再呼叫 AI
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -103,6 +104,18 @@ export default function FolderAnalyzer({
     setFileQueue(newFiles);
   };
 
+  // 從檔名找對應學生（學號優先，其次姓名）— 批次前用來判斷是否已評分
+  const matchStudentByFilename = (filename: string): Student | null => {
+    if (!selectedCourse) return null;
+    const norm = filename.toLowerCase().replace(/[\s\-_.()／/]/g, "");
+    const byId = selectedCourse.students.find((s) => {
+      const id = s.studentId.toLowerCase().replace(/[\s\-_.()／/]/g, "");
+      return id.length >= 4 && norm.includes(id);
+    });
+    if (byId) return byId;
+    return selectedCourse.students.find((s) => s.name && s.name.length >= 2 && filename.includes(s.name)) || null;
+  };
+
   // Trigger AI analysis sequentially (to avoid rate limits and keep logs clear)
   const startAIAnalysis = async () => {
     if (fileQueue.length === 0) return;
@@ -124,6 +137,30 @@ export default function FolderAnalyzer({
     for (let i = 0; i < updatedQueue.length; i++) {
       const file = updatedQueue[i];
       if (file.status === "completed") continue; // skip already completed
+
+      // 已評分就略過：用檔名比對名單，若該生在此項目已有分數則不再呼叫 AI
+      if (skipGraded) {
+        const pre = matchStudentByFilename(file.name);
+        if (pre && pre.grades[targetAsstId] != null) {
+          updatedQueue[i] = {
+            ...file,
+            status: "skipped",
+            analysisResult: {
+              studentName: pre.name,
+              studentId: pre.studentId,
+              score: pre.grades[targetAsstId],
+              feedback: pre.feedback[targetAsstId] || "",
+              confidence: 1,
+            },
+          };
+          setFileQueue([...updatedQueue]);
+          setAnalyzedLogs((prev) => [
+            ...prev,
+            `⏭ 已評分，略過：${file.name}（${pre.name} ${pre.grades[targetAsstId]} 分）`,
+          ]);
+          continue;
+        }
+      }
 
       updatedQueue[i] = { ...file, status: "running" };
       setFileQueue([...updatedQueue]);
@@ -188,7 +225,12 @@ export default function FolderAnalyzer({
     }
 
     setIsProcessing(false);
-    setAnalyzedLogs((prev) => [...prev, `🎉 全數檔案批次處理完畢！`]);
+    const skippedCount = updatedQueue.filter((f) => f.status === "skipped").length;
+    const doneCount = updatedQueue.filter((f) => f.status === "completed").length;
+    setAnalyzedLogs((prev) => [
+      ...prev,
+      `🎉 批次處理完畢！新評分 ${doneCount} 份${skippedCount > 0 ? `，略過已評分 ${skippedCount} 份` : ""}。`,
+    ]);
   };
 
   // Modify AI results manually
@@ -319,6 +361,20 @@ export default function FolderAnalyzer({
                 )}
               </select>
             </div>
+
+            {/* 已評分略過開關 */}
+            <label className="flex items-start gap-2 cursor-pointer select-none pt-1">
+              <input
+                type="checkbox"
+                checked={skipGraded}
+                onChange={(e) => setSkipGraded(e.target.checked)}
+                className="mt-0.5 w-4 h-4 accent-blue-600 cursor-pointer"
+              />
+              <span className="text-xs text-slate-600 leading-relaxed">
+                <span className="font-semibold text-slate-700">略過已評分的學生</span>
+                <span className="block text-[10px] text-slate-400">依檔名（學號／姓名）比對，若該生在此項目已有分數則不再呼叫 AI，省時間與額度。</span>
+              </span>
+            </label>
           </div>
         </div>
 
@@ -470,6 +526,13 @@ export default function FolderAnalyzer({
                           <span className="px-2.5 py-1 bg-red-50 text-red-600 text-xs font-semibold rounded flex items-center gap-1">
                             <AlertTriangle className="w-3.5 h-3.5" />
                             遭遇錯誤
+                          </span>
+                        )}
+                        {file.status === "skipped" && (
+                          <span className="px-2.5 py-1 bg-slate-100 text-slate-500 text-xs font-semibold rounded flex items-center gap-1" title="此學生在此項目已有分數，已略過 AI 評分">
+                            <Check className="w-3.5 h-3.5" />
+                            已評分·略過
+                            {file.analysisResult ? `（${file.analysisResult.studentName} ${file.analysisResult.score}分）` : ""}
                           </span>
                         )}
                       </div>

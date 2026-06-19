@@ -40,7 +40,7 @@ export interface SimulatedUploadedFile {
   size: number;
   type: string;
   base64: string; // raw file content base64
-  status: "idle" | "running" | "completed" | "failed";
+  status: "idle" | "running" | "completed" | "failed" | "skipped";
   error?: string;
   analysisResult?: {
     studentName: string;
