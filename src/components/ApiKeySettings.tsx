@@ -1,28 +1,68 @@
 import { useState, useEffect } from "react";
-import { KeyRound, Loader, Check, ExternalLink } from "lucide-react";
+import { KeyRound, Loader, Check, ExternalLink, Cpu } from "lucide-react";
 
+interface ModelOption {
+  id: string;
+  label: string;
+}
 interface SettingsStatus {
   hasGeminiKey: boolean;
   geminiKeyMasked: string;
   geminiKeySource: "env" | "config" | "none";
+  geminiModel: string;
+  geminiModelFromEnv: boolean;
+  modelOptions: ModelOption[];
 }
 
-// app 內設定 Gemini API key（桌面版用；網頁版也可用）。寫入本機 config.json，即時生效。
+// app 內設定 Gemini API key 與模型（桌面版用；網頁版也可用）。寫入本機 config.json，即時生效。
 export default function ApiKeySettings({ onChange }: { onChange?: () => void }) {
   const [status, setStatus] = useState<SettingsStatus | null>(null);
   const [key, setKey] = useState("");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState("");
+  const [model, setModel] = useState("");
+  const [savingModel, setSavingModel] = useState(false);
+  const [modelMsg, setModelMsg] = useState("");
 
   const load = () =>
     fetch("/api/settings")
       .then((r) => r.json())
-      .then(setStatus)
+      .then((s: SettingsStatus) => {
+        setStatus(s);
+        setModel(s.geminiModel || "");
+      })
       .catch(() => {});
 
   useEffect(() => {
     load();
   }, []);
+
+  const saveModel = async () => {
+    const m = model.trim();
+    if (!m) return;
+    setSavingModel(true);
+    setModelMsg("");
+    try {
+      const r = await fetch("/api/settings/gemini-model", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model: m }),
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error || "儲存失敗");
+      setModelMsg(
+        d.overriddenByEnv
+          ? "已存檔，但目前由環境變數 GEMINI_MODEL 優先（要改用此模型需清掉環境變數）。"
+          : `✓ 已切換為 ${d.geminiModel}。`
+      );
+      load();
+      onChange?.();
+    } catch (e: any) {
+      setModelMsg("❌ " + e.message);
+    } finally {
+      setSavingModel(false);
+    }
+  };
 
   const save = async () => {
     if (!key.trim()) return;
@@ -93,6 +133,44 @@ export default function ApiKeySettings({ onChange }: { onChange?: () => void }) 
       </div>
 
       {msg && <div className="text-[11px] text-slate-500 leading-relaxed">{msg}</div>}
+
+      {/* 模型選擇 */}
+      <div className="pt-2 border-t border-slate-100">
+        <label className="text-xs font-medium text-slate-600 flex items-center gap-1.5 mb-1.5">
+          <Cpu className="w-3.5 h-3.5 text-blue-600" />
+          AI 模型{status?.geminiModelFromEnv && <span className="text-[10px] text-amber-600">（環境變數鎖定）</span>}
+        </label>
+        <div className="flex items-center gap-2">
+          <select
+            value={(status?.modelOptions || []).some((o) => o.id === model) ? model : "__custom__"}
+            onChange={(e) => { if (e.target.value !== "__custom__") setModel(e.target.value); }}
+            disabled={status?.geminiModelFromEnv}
+            className="flex-1 text-xs px-2 py-2 border border-slate-200 rounded outline-none focus:border-blue-500 bg-white text-slate-700 disabled:opacity-50"
+          >
+            {(status?.modelOptions || []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+            <option value="__custom__">自訂（手動輸入 id）…</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-2 mt-1.5">
+          <input
+            type="text"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            disabled={status?.geminiModelFromEnv}
+            placeholder="模型 id，如 gemini-3.1-flash-lite"
+            className="flex-1 text-xs px-3 py-1.5 border border-slate-200 rounded outline-none focus:border-blue-500 font-mono disabled:opacity-50"
+          />
+          <button
+            onClick={saveModel}
+            disabled={savingModel || !model.trim() || status?.geminiModelFromEnv}
+            className="px-3 py-1.5 bg-slate-900 text-white rounded text-xs font-semibold hover:bg-slate-800 transition flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {savingModel ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+            套用
+          </button>
+        </div>
+        {modelMsg && <div className="text-[11px] text-slate-500 leading-relaxed mt-1">{modelMsg}</div>}
+      </div>
 
       <a
         href="https://aistudio.google.com/apikey"

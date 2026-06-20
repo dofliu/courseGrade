@@ -35,29 +35,38 @@ const DB_FILE = path.join(DATA_DIR, "db.json");
 // 本機設定檔（桌面版在 app 內填 API key 時寫這裡；與 db.json 同一資料目錄）
 const CONFIG_FILE = path.join(DATA_DIR, "edugrade-config.json");
 
-function loadConfigKey(): string {
+function loadConfig(): any {
   try {
-    const cfg = JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
-    return typeof cfg.geminiApiKey === "string" ? cfg.geminiApiKey : "";
+    return JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
   } catch {
-    return "";
+    return {};
   }
 }
+
+// 預設模型 + 可選清單（前端設定 UI 用；也允許自訂任意有效 model id）
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+const GEMINI_MODELS = [
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash（預設・最聰明）" },
+  { id: "gemini-3-flash", label: "Gemini 3 Flash（效能匹敵、成本低）" },
+  { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite（最便宜）" },
+  { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro（最強、最貴）" },
+];
 
 // 目前生效的 Gemini API key：環境變數優先，其次本機 config.json（桌面版在 app 內填）
 let geminiApiKey = "";
 let geminiKeySource: "env" | "config" | "none" = "none";
-(function initGeminiKey() {
+// 目前生效的模型：環境變數 GEMINI_MODEL 優先，其次 config.json，最後預設
+let geminiModel = DEFAULT_GEMINI_MODEL;
+(function initGeminiSettings() {
+  const cfg = loadConfig();
   if (process.env.GEMINI_API_KEY) {
     geminiApiKey = process.env.GEMINI_API_KEY;
     geminiKeySource = "env";
-  } else {
-    const k = loadConfigKey();
-    if (k) {
-      geminiApiKey = k;
-      geminiKeySource = "config";
-    }
+  } else if (typeof cfg.geminiApiKey === "string" && cfg.geminiApiKey) {
+    geminiApiKey = cfg.geminiApiKey;
+    geminiKeySource = "config";
   }
+  geminiModel = process.env.GEMINI_MODEL || (typeof cfg.geminiModel === "string" && cfg.geminiModel) || DEFAULT_GEMINI_MODEL;
 })();
 
 const maskKey = (k: string) => (k ? (k.length > 6 ? "…" + k.slice(-4) : "****") : "");
@@ -353,7 +362,7 @@ Return your response in clean JSON matching the target schema.`;
   ];
 
   const result = await geminiGenerate({
-    model: "gemini-3.5-flash",
+    model: geminiModel,
     contents,
     config: {
       systemInstruction: systemPrompt,
@@ -425,7 +434,7 @@ async function generateExamWithGemini(opts: {
   const contents = [...opts.parts, instruction];
 
   const result = await geminiGenerate({
-    model: "gemini-3.5-flash",
+    model: geminiModel,
     contents,
     config: {
       responseMimeType: "application/json",
@@ -583,9 +592,16 @@ app.get("/api/version", (_req, res) => {
   res.json({ version: APP_VERSION, startedAt: SERVER_STARTED_AT });
 });
 
-// 設定狀態：前端（尤其桌面版）用來顯示 API key 是否已設、來源、遮罩值
+// 設定狀態：前端（尤其桌面版）用來顯示 API key 是否已設、來源、遮罩值，以及目前模型與可選清單
 app.get("/api/settings", (_req, res) => {
-  res.json({ hasGeminiKey: !!geminiApiKey, geminiKeyMasked: maskKey(geminiApiKey), geminiKeySource });
+  res.json({
+    hasGeminiKey: !!geminiApiKey,
+    geminiKeyMasked: maskKey(geminiApiKey),
+    geminiKeySource,
+    geminiModel,
+    geminiModelFromEnv: !!process.env.GEMINI_MODEL,
+    modelOptions: GEMINI_MODELS,
+  });
 });
 
 // 在 app 內設定 Gemini API key：寫入本機 config.json 並即時生效（環境變數已設時 env 仍優先）
@@ -618,6 +634,29 @@ app.post("/api/settings/gemini-key", async (req, res) => {
     });
   } catch (e: any) {
     res.status(500).json({ error: "儲存 API key 失敗: " + e.message });
+  }
+});
+
+// 在 app 內切換 Gemini 模型：寫入本機 config.json 並即時生效（環境變數 GEMINI_MODEL 已設時 env 優先）
+app.post("/api/settings/gemini-model", async (req, res) => {
+  try {
+    const model = String(req.body?.model || "").trim();
+    if (!model) return res.status(400).json({ error: "請提供模型 id。" });
+    let cfg: any = {};
+    try {
+      cfg = JSON.parse(await fs.readFile(CONFIG_FILE, "utf-8"));
+    } catch {
+      /* 首次或無檔 */
+    }
+    cfg.geminiModel = model;
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await atomicWriteJson(CONFIG_FILE, cfg);
+
+    const envWins = !!process.env.GEMINI_MODEL;
+    if (!envWins) geminiModel = model; // 模型只是參數，不需重置 client
+    res.json({ success: true, geminiModel, overriddenByEnv: envWins });
+  } catch (e: any) {
+    res.status(500).json({ error: "儲存模型失敗: " + e.message });
   }
 });
 
@@ -920,7 +959,7 @@ Return your response in clean JSON matching the target schema.`;
     const textPrompt = `Grading student submission file download from Gmail: "${filename}". Verify details, evaluate quality, and generate feedback.`;
 
     const result = await geminiGenerate({
-      model: "gemini-3.5-flash",
+      model: geminiModel,
       contents: [imagePart, textPrompt],
       config: {
         systemInstruction: systemPrompt,

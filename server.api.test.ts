@@ -129,11 +129,31 @@ describe("GET/POST /api/gmail/cache", () => {
 });
 
 describe("GET/POST /api/settings（Gemini API key）", () => {
-  it("GET 回傳金鑰狀態結構", async () => {
+  it("GET 回傳金鑰與模型狀態結構", async () => {
     const res = await request(app).get("/api/settings");
     expect(res.status).toBe(200);
     expect(typeof res.body.hasGeminiKey).toBe("boolean");
     expect(["env", "config", "none"]).toContain(res.body.geminiKeySource);
+    expect(typeof res.body.geminiModel).toBe("string");
+    expect(Array.isArray(res.body.modelOptions)).toBe(true);
+    expect(res.body.modelOptions.length).toBeGreaterThan(0);
+  });
+
+  it("POST 切換模型 → 200、寫入 config 並反映在 GET（除非被 env 鎖定）", async () => {
+    const res = await request(app).post("/api/settings/gemini-model").send({ model: "gemini-3.1-flash-lite" });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    const cfg = JSON.parse(await fs.readFile(path.join(dataDir, "edugrade-config.json"), "utf-8"));
+    expect(cfg.geminiModel).toBe("gemini-3.1-flash-lite");
+    if (!process.env.GEMINI_MODEL) {
+      const after = await request(app).get("/api/settings");
+      expect(after.body.geminiModel).toBe("gemini-3.1-flash-lite");
+    }
+  });
+
+  it("POST 空模型 → 400", async () => {
+    const res = await request(app).post("/api/settings/gemini-model").send({ model: "" });
+    expect(res.status).toBe(400);
   });
 
   it("POST 空 key → 400", async () => {
