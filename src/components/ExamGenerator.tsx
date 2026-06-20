@@ -77,6 +77,11 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
       alert("請至少選一種題型。");
       return;
     }
+    const totalBytes = files.reduce((s, f) => s + f.size, 0);
+    if (totalBytes > 38 * 1024 * 1024) {
+      alert(`講義檔案太大（約 ${(totalBytes / 1024 / 1024).toFixed(0)}MB），可能超過上傳上限。請減少份數或先壓縮 PDF。`);
+      return;
+    }
     setGenerating(true);
     setLogs([`🤖 正在依${files.length > 0 ? `${files.length} 份講義` : "章節範圍"}生成 ${count} 題...`]);
     try {

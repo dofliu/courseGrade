@@ -17,6 +17,7 @@ export default function App() {
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [saveError, setSaveError] = useState<string | null>(null); // 儲存失敗時顯示，避免「以為存到了其實沒存」
+  const [serverStartedAt, setServerStartedAt] = useState<string | null>(null); // server 啟動時間（確認是否已重啟）
 
   // Load database on startup from Express backend
   useEffect(() => {
@@ -36,6 +37,11 @@ export default function App() {
       }
     };
     fetchDB();
+    // 取得 server 版本/啟動時間（顯示在頁尾，方便確認改了 server 有沒有重啟）
+    fetch("/api/version")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d && setServerStartedAt(d.startedAt))
+      .catch(() => {});
   }, []);
 
   // Save changes to Express backend
@@ -494,7 +500,12 @@ export default function App() {
         {/* FOOTER */}
         <footer className="bg-white border-t border-slate-200 py-3 px-8 text-[11px] text-slate-400 font-mono text-center sm:text-left flex flex-col sm:flex-row justify-between gap-2" id="id_footer_info">
           <span>🎯 EduGrade AI CoPilot 版權所有 • 支援即時 PDF/XLSX 行動辨識與 Gmail 單頁通訊</span>
-          <span>連線安全伺服器 • 辨識引擎 (Gemini AI-Core)</span>
+          <span>
+            {serverStartedAt
+              ? `server 啟動 ${new Date(serverStartedAt).toLocaleString("zh-TW", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}`
+              : "server 連線中…"}
+            {" • Gemini AI-Core"}
+          </span>
         </footer>
 
       </main>

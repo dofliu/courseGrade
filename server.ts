@@ -15,8 +15,12 @@ dotenv.config();
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
-// Set up JSON body size limit to support base64 school documents
-app.use(express.json({ limit: "30mb" }));
+// 版本與啟動時間：讓前端能顯示「跑的是不是最新程式、何時啟動」，避免改了 server 卻忘了重啟
+const APP_VERSION = "2026.06";
+const SERVER_STARTED_AT = new Date().toISOString();
+
+// JSON body 上限：支援一次上傳多份 base64 講義/掃描檔（出題的大 PDF）
+app.use(express.json({ limit: "50mb" }));
 
 // DB File destination
 const DB_FILE = path.join(process.cwd(), "db.json");
@@ -40,6 +44,44 @@ function getGeminiAI(): GoogleGenAI {
     });
   }
   return aiClient;
+}
+
+// 判斷是否為「暫時性」錯誤（值得重試）：限流/伺服器忙/網路；400 等永久錯誤不重試
+function isRetryableGeminiError(e: any): boolean {
+  const msg = String(e?.message || e || "").toLowerCase();
+  return (
+    /\b(429|500|502|503|504)\b/.test(msg) ||
+    msg.includes("resource_exhausted") ||
+    msg.includes("unavailable") ||
+    msg.includes("overloaded") ||
+    msg.includes("internal error") ||
+    msg.includes("deadline") ||
+    msg.includes("econnreset") ||
+    msg.includes("etimedout") ||
+    msg.includes("fetch failed") ||
+    msg.includes("network")
+  );
+}
+
+// 呼叫 Gemini，遇暫時性錯誤自動退避重試（1s→2s），讓單筆偶發失敗不中斷整批
+async function geminiGenerate(args: any, attempts = 3): Promise<any> {
+  const ai = getGeminiAI();
+  let lastErr: any;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await ai.models.generateContent(args);
+    } catch (e: any) {
+      lastErr = e;
+      if (i < attempts - 1 && isRetryableGeminiError(e)) {
+        const delay = 1000 * Math.pow(2, i);
+        console.warn(`[Gemini] 暫時性錯誤，${delay}ms 後重試（${i + 1}/${attempts - 1}）：`, e?.message || e);
+        await new Promise((r) => setTimeout(r, delay));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
 }
 
 // Initial demo database content
@@ -362,7 +404,7 @@ Return your response in clean JSON matching the target schema.`;
     `Grading student submission "${label}" (may span multiple files/pages). Verify details, evaluate quality, and generate feedback.`,
   ];
 
-  const result = await ai.models.generateContent({
+  const result = await geminiGenerate({
     model: "gemini-3.5-flash",
     contents,
     config: {
@@ -423,7 +465,7 @@ async function generateExamWithGemini(opts: {
 
   const contents = [...opts.parts, instruction];
 
-  const result = await ai.models.generateContent({
+  const result = await geminiGenerate({
     model: "gemini-3.5-flash",
     contents,
     config: {
@@ -589,6 +631,11 @@ app.get("/api/db", async (req, res) => {
   } catch (e: any) {
     res.status(500).json({ error: "Failed to read database: " + e.message });
   }
+});
+
+// 版本/啟動時間：前端用來顯示「目前跑的 server 何時啟動」，方便確認改了 server 有沒有重啟
+app.get("/api/version", (_req, res) => {
+  res.json({ version: APP_VERSION, startedAt: SERVER_STARTED_AT });
 });
 
 // 2. Save entire Database
@@ -887,7 +934,7 @@ Return your response in clean JSON matching the target schema.`;
 
     const textPrompt = `Grading student submission file download from Gmail: "${filename}". Verify details, evaluate quality, and generate feedback.`;
 
-    const result = await ai.models.generateContent({
+    const result = await geminiGenerate({
       model: "gemini-3.5-flash",
       contents: [imagePart, textPrompt],
       config: {
@@ -1081,6 +1128,10 @@ app.post("/api/gmail/analyze-cached", async (req, res) => {
 app.use((err: any, _req: any, res: any, _next: any) => {
   console.error("[express error]", err);
   if (res.headersSent) return;
+  // 上傳內容過大（多份大檔）→ 給明確訊息而非神祕 500
+  if (err?.type === "entity.too.large" || err?.status === 413) {
+    return res.status(413).json({ error: "上傳內容過大（單次上限約 50MB）。請減少檔案數量或大小（大型 PDF 可先壓縮）。" });
+  }
   res.status(500).json({ error: "伺服器內部錯誤：" + (err?.message || "未知錯誤") });
 });
 
