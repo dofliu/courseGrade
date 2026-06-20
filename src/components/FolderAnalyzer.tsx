@@ -95,6 +95,7 @@ export default function FolderAnalyzer({
       newFiles.push({
         id: "file-" + i + "-" + Date.now(),
         name: file.name,
+        relativePath: (file as any).webkitRelativePath || file.name, // 含上層資料夾（學號_姓名）
         size: file.size,
         type: file.type || "application/octet-stream",
         base64,
@@ -131,9 +132,9 @@ export default function FolderAnalyzer({
       const file = updatedQueue[i];
       if (file.status === "completed") continue; // skip already completed
 
-      // 已評分就略過：用檔名比對名單，若該生在此項目已有分數則不再呼叫 AI
+      // 已評分就略過：用檔名／上層資料夾比對名單，若該生在此項目已有分數則不再呼叫 AI
       if (skipGraded) {
-        const pre = matchByFilename(file.name);
+        const pre = matchByFilename(file.relativePath || file.name);
         if (pre && pre.grades[targetAsstId] != null) {
           updatedQueue[i] = {
             ...file,
@@ -168,7 +169,8 @@ export default function FolderAnalyzer({
           body: JSON.stringify({
             fileContent: file.base64,
             mimeType: file.type,
-            fileName: file.name,
+            // 傳完整路徑（含學號_姓名 資料夾），讓 AI 也能從路徑判讀身分
+            fileName: file.relativePath || file.name,
             roster: selectedCourse.students.map((s) => ({ studentId: s.studentId, name: s.name })),
             assessmentName: activeAssessment?.name || "作業",
             rubric: activeAssessment?.rubric || "",
@@ -181,12 +183,17 @@ export default function FolderAnalyzer({
 
         const data = await response.json();
 
+        // 優先用「路徑（上層資料夾學號_姓名）」做確定性配對；認得出就覆蓋 AI 的猜測，補上學籍
+        const pathStudent = matchByFilename(file.relativePath || file.name);
+        const resolvedName = pathStudent ? pathStudent.name : (data.studentName || "");
+        const resolvedId = pathStudent ? pathStudent.studentId : (data.studentId || "");
+
         updatedQueue[i] = {
           ...file,
           status: "completed",
           analysisResult: {
-            studentName: data.studentName || "",
-            studentId: data.studentId || "",
+            studentName: resolvedName,
+            studentId: resolvedId,
             score: data.score != null ? data.score : 80,
             feedback: data.feedback || "AI 已成功辨識，請填入具體評語。",
             confidence: data.confidence || 0.9,
@@ -195,11 +202,11 @@ export default function FolderAnalyzer({
 
         setAnalyzedLogs((prev) => [
           ...prev,
-          `✓ 完成 📍 辨識學生: ${data.studentName || "未知"} (得分: ${data.score != null ? data.score : "未評分"})`
+          `✓ 完成 📍 辨識學生: ${resolvedName || "未知"}${pathStudent ? "（依資料夾路徑）" : ""} (得分: ${data.score != null ? data.score : "未評分"})`
         ]);
 
-        // 辨識配對到名單學生 → 立即登記「已繳待評」（分數待按下儲存才寫入）
-        const matched = findMatchingStudentFromRoster(data.studentName || "", data.studentId || "");
+        // 配對到名單學生 → 立即登記「已繳待評」（分數待按下儲存才寫入）
+        const matched = pathStudent || findMatchingStudentFromRoster(resolvedName, resolvedId);
         if (matched) {
           markStudentsSubmitted([matched.id]);
         }
@@ -490,6 +497,11 @@ export default function FolderAnalyzer({
                         </div>
                         <div>
                           <div className="font-semibold text-sm text-slate-800 truncate max-w-sm">{file.name}</div>
+                          {file.relativePath && file.relativePath.includes("/") && (
+                            <div className="text-[11px] text-blue-600 truncate max-w-sm font-mono" title={file.relativePath}>
+                              📁 {file.relativePath.split("/").slice(0, -1).join(" / ")}
+                            </div>
+                          )}
                           <div className="text-xs text-slate-400 mt-0.5">
                             {(file.size / 1024).toFixed(1)} KB • {file.type || "檔案格式不明"}
                           </div>

@@ -56,4 +56,13 @@ describe("matchStudentByFilename", () => {
   it("認不出 → null", () => {
     expect(matchStudentByFilename(roster, "IMG_0001.jpg")).toBeNull();
   });
+  it("檔名無資訊、靠上層資料夾路徑（學號）配對", () => {
+    const r2 = [{ studentId: "3B261060", name: "謝昆霖", email: "x@s.edu" }];
+    const path = "人工智慧0310作業/3B261060_謝昆霖/submission.txt";
+    expect(matchStudentByFilename(r2, path)?.studentId).toBe("3B261060");
+  });
+  it("檔名無資訊、靠上層資料夾路徑（姓名）配對", () => {
+    const r2 = [{ studentId: "X999", name: "謝昆霖", email: "x@s.edu" }];
+    expect(matchStudentByFilename(r2, "作業/謝昆霖/report.pdf")?.name).toBe("謝昆霖");
+  });
 });

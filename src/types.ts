@@ -39,6 +39,7 @@ export interface DatabaseState {
 export interface SimulatedUploadedFile {
   id: string;
   name: string;
+  relativePath?: string; // 含上層資料夾的路徑（如 3B261060_謝昆霖/submission.txt），用來補學籍配對
   size: number;
   type: string;
   base64: string; // raw file content base64
