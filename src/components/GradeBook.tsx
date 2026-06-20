@@ -42,6 +42,12 @@ export default function GradeBook({
   const [bulkScore, setBulkScore] = useState("");
   const [bulkOnlyEmpty, setBulkOnlyEmpty] = useState(true);
 
+  // 全班加減分（一次調整所有人的個人加減分）
+  const [showBulkAdj, setShowBulkAdj] = useState(false);
+  const [bulkAdjValue, setBulkAdjValue] = useState("");
+  const [bulkAdjNote, setBulkAdjNote] = useState("");
+  const [bulkAdjMode, setBulkAdjMode] = useState<"set" | "add">("set");
+
   if (!currentCourse) {
     return (
       <div className="bg-white p-12 text-center rounded-2xl border border-gray-100 text-slate-400">
@@ -230,6 +236,32 @@ export default function GradeBook({
     setBulkScore("");
   };
 
+  // 全班加減分：一次調整所有人的個人加減分（設為固定值，或在現有上各加）
+  const handleBulkAdjustment = () => {
+    const v = parseFloat(bulkAdjValue);
+    if (isNaN(v)) {
+      alert("請輸入加減分數值（可為負數）。");
+      return;
+    }
+    const updatedStudents = students.map((s) => {
+      const next = bulkAdjMode === "add" ? (s.adjustment ?? 0) + v : v;
+      return {
+        ...s,
+        adjustment: Math.round(next * 10) / 10,
+        adjustmentNote: bulkAdjNote ? bulkAdjNote : s.adjustmentNote,
+      };
+    });
+    onUpdateCourses(courses.map((c) => (c.id === currentCourse.id ? { ...currentCourse, students: updatedStudents } : c)));
+    alert(
+      bulkAdjMode === "add"
+        ? `已為全班 ${students.length} 位各加 ${v} 分（在原有加減分上累加）。`
+        : `已將全班 ${students.length} 位的個人加減分設為 ${v} 分。`
+    );
+    setShowBulkAdj(false);
+    setBulkAdjValue("");
+    setBulkAdjNote("");
+  };
+
   // 找出某列資料對應的學生（學號優先，找不到再比對姓名）
   const findStudentForRow = (row: { studentId: string }) =>
     students.find((s) => s.studentId === row.studentId || s.name === row.studentId) || null;
@@ -385,6 +417,16 @@ export default function GradeBook({
           </button>
 
           <button
+            onClick={() => setShowBulkAdj((v) => !v)}
+            className={`px-4 py-2 rounded text-xs font-semibold shadow-sm transition flex items-center gap-1.5 ${
+              showBulkAdj ? "bg-purple-700 text-white" : "bg-purple-600 text-white hover:bg-purple-700"
+            }`}
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+            全班加減分
+          </button>
+
+          <button
             onClick={() => setShowImport((v) => !v)}
             className={`px-4 py-2 rounded text-xs font-semibold shadow-sm transition flex items-center gap-1.5 ${
               showImport ? "bg-blue-700 text-white" : "bg-blue-600 text-white hover:bg-blue-700"
@@ -403,6 +445,68 @@ export default function GradeBook({
           </button>
         </div>
       </div>
+
+      {/* 全班加減分面板 */}
+      {showBulkAdj && (
+        <div className="border border-purple-200 bg-purple-50/50 rounded p-5 space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h4 className="font-display font-semibold text-slate-900 text-sm flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-purple-600" />
+                全班個人加減分
+              </h4>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                一次調整全班所有人的「個人加減分」（直接加到累計加權分）。個別微調仍可展開單一學生修改。
+              </p>
+            </div>
+            <button onClick={() => setShowBulkAdj(false)} className="text-slate-400 hover:text-slate-600 p-1">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">方式</label>
+              <select
+                value={bulkAdjMode}
+                onChange={(e) => setBulkAdjMode(e.target.value as "set" | "add")}
+                className="text-xs px-3 py-2 border border-slate-200 rounded outline-none bg-white focus:border-purple-400 font-semibold text-slate-700"
+              >
+                <option value="set">設為（覆蓋每位現有加減分）</option>
+                <option value="add">各加（在現有上累加，可負）</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">分數（可負）</label>
+              <input
+                type="number"
+                step="0.5"
+                value={bulkAdjValue}
+                onChange={(e) => setBulkAdjValue(e.target.value)}
+                placeholder="例如 5 或 -2"
+                className="w-28 text-sm font-bold text-center px-3 py-2 border border-slate-200 rounded outline-none focus:border-purple-400 text-purple-700"
+              />
+            </div>
+            <div className="flex-1 min-w-[160px]">
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">原因備註（選填）</label>
+              <input
+                type="text"
+                value={bulkAdjNote}
+                onChange={(e) => setBulkAdjNote(e.target.value)}
+                placeholder="如：全班出席良好 +3"
+                className="w-full text-[11px] px-2 py-2 bg-white border border-slate-200 rounded outline-none focus:border-purple-400 text-slate-600"
+              />
+            </div>
+            <button
+              onClick={handleBulkAdjustment}
+              className="px-4 py-2 text-xs bg-purple-600 text-white rounded font-semibold hover:bg-purple-700 transition flex items-center gap-1.5"
+            >
+              <Check className="w-3.5 h-3.5" />
+              套用到全班
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 整欄填同分面板 */}
       {showBulkFill && (
