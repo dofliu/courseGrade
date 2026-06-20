@@ -128,6 +128,28 @@ describe("GET/POST /api/gmail/cache", () => {
   });
 });
 
+describe("GET/POST /api/settings（Gemini API key）", () => {
+  it("GET 回傳金鑰狀態結構", async () => {
+    const res = await request(app).get("/api/settings");
+    expect(res.status).toBe(200);
+    expect(typeof res.body.hasGeminiKey).toBe("boolean");
+    expect(["env", "config", "none"]).toContain(res.body.geminiKeySource);
+  });
+
+  it("POST 空 key → 400", async () => {
+    const res = await request(app).post("/api/settings/gemini-key").send({ key: "  " });
+    expect(res.status).toBe(400);
+  });
+
+  it("POST 合法 key → 200 並寫入本機 config.json", async () => {
+    const res = await request(app).post("/api/settings/gemini-key").send({ key: "test-key-abcd1234" });
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+    const cfg = JSON.parse(await fs.readFile(path.join(dataDir, "edugrade-config.json"), "utf-8"));
+    expect(cfg.geminiApiKey).toBe("test-key-abcd1234");
+  });
+});
+
 describe("/api/gmail/analyze-cached 守門（不觸發 Gemini）", () => {
   it("缺必要參數 → 400", async () => {
     const res = await request(app).post("/api/gmail/analyze-cached").send({ courseId: "c1" });

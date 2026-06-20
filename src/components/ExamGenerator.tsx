@@ -42,6 +42,11 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
   const [mode, setMode] = useState<"strict" | "creative">("strict");
   const [contentFocus, setContentFocus] = useState("");
   const [topics, setTopics] = useState("");
+  // 難度分布（各難度題數，全 0 = 交給 AI 自行混合）
+  const [diffMix, setDiffMix] = useState<{ basic: number; medium: number; advanced: number }>({ basic: 0, medium: 0, advanced: 0 });
+  // 自動平衡總分
+  const [balanceEnabled, setBalanceEnabled] = useState(false);
+  const [balanceTarget, setBalanceTarget] = useState(100);
   const [files, setFiles] = useState<UploadFile[]>([]);
   const [generating, setGenerating] = useState(false);
   const [questions, setQuestions] = useState<ExamQuestion[]>([]);
@@ -97,6 +102,8 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
           mode,
           contentFocus,
           topics,
+          difficultyMix: diffMix.basic + diffMix.medium + diffMix.advanced > 0 ? diffMix : undefined,
+          balancePoints: balanceEnabled ? balanceTarget : 0,
           files: files.map((f) => ({ filename: f.name, mimeType: f.mimeType, base64: f.base64 })),
         }),
       });
@@ -287,6 +294,42 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
             <input type="text" value={topics} onChange={(e) => setTopics(e.target.value)}
               placeholder="如：第3章 桁架、第4章 摩擦"
               className="w-full text-xs px-3 py-2 border border-slate-200 rounded outline-none focus:border-blue-500" />
+          </div>
+
+          {/* 難度分布控制 */}
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1.5">
+              難度分布（各難度題數，全 0＝由 AI 自行混合）
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {([["basic", "基礎"], ["medium", "中等"], ["advanced", "進階"]] as const).map(([k, label]) => (
+                <div key={k} className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded px-2 py-1">
+                  <span className="text-[11px] text-slate-500 flex-shrink-0">{label}</span>
+                  <input type="number" min={0} value={diffMix[k]}
+                    onChange={(e) => setDiffMix((p) => ({ ...p, [k]: Math.max(0, Number(e.target.value) || 0) }))}
+                    className="w-full text-xs text-center px-1 py-0.5 border border-slate-200 rounded outline-none focus:border-blue-500 text-blue-700 font-bold" />
+                </div>
+              ))}
+            </div>
+            {diffMix.basic + diffMix.medium + diffMix.advanced > 0 &&
+              diffMix.basic + diffMix.medium + diffMix.advanced !== count && (
+                <p className="text-[10px] text-amber-600 mt-1">
+                  分布合計 {diffMix.basic + diffMix.medium + diffMix.advanced} 題 ≠ 題數 {count}；以分布為準，AI 會盡量符合。
+                </p>
+              )}
+          </div>
+
+          {/* 自動平衡總分 */}
+          <div className="flex items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={balanceEnabled} onChange={(e) => setBalanceEnabled(e.target.checked)}
+                className="w-3.5 h-3.5 accent-blue-600" />
+              自動平衡總分為
+            </label>
+            <input type="number" min={1} value={balanceTarget} disabled={!balanceEnabled}
+              onChange={(e) => setBalanceTarget(Math.max(1, Number(e.target.value) || 100))}
+              className="w-16 text-xs text-center px-2 py-1 border border-slate-200 rounded outline-none focus:border-blue-500 text-blue-700 font-bold disabled:opacity-40" />
+            <span className="text-xs text-slate-400">分</span>
           </div>
         </div>
 

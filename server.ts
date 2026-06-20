@@ -1,13 +1,14 @@
 import express from "express";
 import path from "path";
 import fs from "fs/promises";
+import { readFileSync } from "fs";
 import crypto from "crypto";
 import mammoth from "mammoth";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { matchStudentFromSignals } from "./src/lib/matching";
 import { extractNotebookText } from "./src/lib/notebook";
-import { parseExamQuestions } from "./src/lib/exam";
+import { parseExamQuestions, balancePointsTo } from "./src/lib/exam";
 import { isValidDb, atomicWriteJson, backupJson, loadLatestValidBackup } from "./src/lib/db";
 
 // 優先讀 .env.local（放本機機密，與 Vite 前端共用同一檔），再以 .env 補沒設到的值。
@@ -31,17 +32,46 @@ const DATA_DIR = process.env.EDUGRADE_DATA_DIR || process.cwd();
 // DB File destination
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
+// 本機設定檔（桌面版在 app 內填 API key 時寫這裡；與 db.json 同一資料目錄）
+const CONFIG_FILE = path.join(DATA_DIR, "edugrade-config.json");
+
+function loadConfigKey(): string {
+  try {
+    const cfg = JSON.parse(readFileSync(CONFIG_FILE, "utf-8"));
+    return typeof cfg.geminiApiKey === "string" ? cfg.geminiApiKey : "";
+  } catch {
+    return "";
+  }
+}
+
+// 目前生效的 Gemini API key：環境變數優先，其次本機 config.json（桌面版在 app 內填）
+let geminiApiKey = "";
+let geminiKeySource: "env" | "config" | "none" = "none";
+(function initGeminiKey() {
+  if (process.env.GEMINI_API_KEY) {
+    geminiApiKey = process.env.GEMINI_API_KEY;
+    geminiKeySource = "env";
+  } else {
+    const k = loadConfigKey();
+    if (k) {
+      geminiApiKey = k;
+      geminiKeySource = "config";
+    }
+  }
+})();
+
+const maskKey = (k: string) => (k ? (k.length > 6 ? "…" + k.slice(-4) : "****") : "");
+
 // Cache Gemini AI instance
 let aiClient: GoogleGenAI | null = null;
 
 function getGeminiAI(): GoogleGenAI {
   if (!aiClient) {
-    const key = process.env.GEMINI_API_KEY;
-    if (!key) {
-      console.warn("WARNING: GEMINI_API_KEY environment variable is not set. AI functions will fail.");
+    if (!geminiApiKey) {
+      console.warn("WARNING: 尚未設定 Gemini API key（環境變數或 app 內設定皆可）。AI 功能會失敗。");
     }
     aiClient = new GoogleGenAI({
-      apiKey: key || "",
+      apiKey: geminiApiKey || "",
       httpOptions: {
         headers: {
           "User-Agent": "aistudio-build",
@@ -359,6 +389,8 @@ async function generateExamWithGemini(opts: {
   mode?: "strict" | "creative";
   contentFocus?: string;
   topics?: string;
+  difficultyMix?: { basic?: number; medium?: number; advanced?: number };
+  balancePoints?: number;
 }) {
   const ai = getGeminiAI();
   const types =
@@ -372,6 +404,14 @@ async function generateExamWithGemini(opts: {
       : "只能根據提供的講義內容出題，嚴格不要超出講義範圍。"
     : "";
 
+  // 難度分布：使用者指定各難度題數時，明確要求；否則讓 AI 自行混合
+  const mix = opts.difficultyMix;
+  const mixSum = mix ? (mix.basic || 0) + (mix.medium || 0) + (mix.advanced || 0) : 0;
+  const difficultyInstr =
+    mix && mixSum > 0
+      ? `Difficulty distribution (exact counts): basic=${mix.basic || 0}, medium=${mix.medium || 0}, advanced=${mix.advanced || 0}. Label each question's "difficulty" accordingly. `
+      : `Vary difficulty across basic/medium/advanced. `;
+
   const instruction =
     `You are an expert exam author. Generate exactly ${opts.count} exam questions in Traditional Chinese (繁體中文) ` +
     `for the course "${opts.course}". Allowed question types ONLY: ${types.join(", ")}. ` +
@@ -379,7 +419,8 @@ async function generateExamWithGemini(opts: {
     (opts.contentFocus ? `Additional focus/style instruction: "${opts.contentFocus}". ` : "") +
     `For multiple-choice, provide an "options" array of {key,value} objects with keys A, B, C, D, and set correctAnswer to the correct key (e.g. "A"). ` +
     `For true-false, correctAnswer must be "正確" or "錯誤". For fill-in-the-blank, correctAnswer is the expected answer text. ` +
-    `Vary difficulty across basic/medium/advanced. Questions and options MUST be Traditional Chinese. Return a JSON array.`;
+    difficultyInstr +
+    `Questions and options MUST be Traditional Chinese. Return a JSON array.`;
 
   const contents = [...opts.parts, instruction];
 
@@ -413,7 +454,11 @@ async function generateExamWithGemini(opts: {
   });
 
   // 解析（options reduce、配分換算、補 id）改用共用模組 src/lib/exam（有單元測試）
-  return parseExamQuestions(JSON.parse(result.text || "[]"));
+  const questions = parseExamQuestions(JSON.parse(result.text || "[]"));
+  // 自動平衡總分：把整份配分等比例縮放到 balancePoints（如 100 分）
+  return opts.balancePoints && opts.balancePoints > 0
+    ? balancePointsTo(questions, opts.balancePoints)
+    : questions;
 }
 
 // 多訊號學籍配對改用共用模組 src/lib/matching（與前端同一份邏輯、有單元測試）
@@ -538,6 +583,44 @@ app.get("/api/version", (_req, res) => {
   res.json({ version: APP_VERSION, startedAt: SERVER_STARTED_AT });
 });
 
+// 設定狀態：前端（尤其桌面版）用來顯示 API key 是否已設、來源、遮罩值
+app.get("/api/settings", (_req, res) => {
+  res.json({ hasGeminiKey: !!geminiApiKey, geminiKeyMasked: maskKey(geminiApiKey), geminiKeySource });
+});
+
+// 在 app 內設定 Gemini API key：寫入本機 config.json 並即時生效（環境變數已設時 env 仍優先）
+app.post("/api/settings/gemini-key", async (req, res) => {
+  try {
+    const key = String(req.body?.key || "").trim();
+    if (!key) return res.status(400).json({ error: "請提供 API key。" });
+    let cfg: any = {};
+    try {
+      cfg = JSON.parse(await fs.readFile(CONFIG_FILE, "utf-8"));
+    } catch {
+      /* 首次或無檔 */
+    }
+    cfg.geminiApiKey = key;
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await atomicWriteJson(CONFIG_FILE, cfg);
+
+    const envWins = geminiKeySource === "env";
+    if (!envWins) {
+      geminiApiKey = key;
+      geminiKeySource = "config";
+      aiClient = null; // 重置快取的 client，下次呼叫用新 key
+    }
+    res.json({
+      success: true,
+      hasGeminiKey: !!geminiApiKey,
+      geminiKeyMasked: maskKey(envWins ? geminiApiKey : key),
+      geminiKeySource,
+      overriddenByEnv: envWins,
+    });
+  } catch (e: any) {
+    res.status(500).json({ error: "儲存 API key 失敗: " + e.message });
+  }
+});
+
 // 2. Save entire Database
 app.post("/api/db", async (req, res) => {
   try {
@@ -595,7 +678,7 @@ app.post("/api/analyze-file", async (req, res) => {
 // 3b. AI 出題（紙本考卷）— 可上傳講義（多份、多格式）從內容出題
 app.post("/api/exam/generate", async (req, res) => {
   try {
-    const { course, count, questionTypes, mode, contentFocus, topics, files } = req.body;
+    const { course, count, questionTypes, mode, contentFocus, topics, files, difficultyMix, balancePoints } = req.body;
     const n = Number(count);
     if (!n || n < 1) return res.status(400).json({ error: "請指定題數（至少 1）。" });
 
@@ -626,6 +709,8 @@ app.post("/api/exam/generate", async (req, res) => {
       mode,
       contentFocus,
       topics,
+      difficultyMix,
+      balancePoints: Number(balancePoints) || 0,
     });
 
     res.json({ questions, usedFiles, skippedFiles });

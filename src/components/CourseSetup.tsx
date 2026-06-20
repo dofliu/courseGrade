@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import * as XLSX from "xlsx";
 import { Course, Student, AssessmentItem, RubricTemplate } from "../types";
+import ApiKeySettings from "./ApiKeySettings";
 import { Plus, Trash2, Edit2, AlertCircle, CheckCircle, Upload, HelpCircle, Users, Percent, GraduationCap, ChevronDown, Check, FileSpreadsheet, FileUp } from "lucide-react";
 
 interface CourseSetupProps {
@@ -504,6 +505,7 @@ export default function CourseSetup({
       
       {/* LEFT: Course Directory & Selection */}
       <div className="lg:col-span-4 space-y-6">
+        <ApiKeySettings />
         <div className="bg-white p-6 border border-slate-200 shadow-sm">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-display font-semibold text-lg text-slate-900 flex items-center gap-2">
