@@ -390,6 +390,90 @@ Return your response in clean JSON matching the target schema.`;
   return JSON.parse(result.text || "{}");
 }
 
+// AI 出題（紙本考卷）。parts 為講義內容片段（文字或圖片/PDF），可空（純章節出題）。
+async function generateExamWithGemini(opts: {
+  parts: any[];
+  course: string;
+  count: number;
+  questionTypes?: string[];
+  mode?: "strict" | "creative";
+  contentFocus?: string;
+  topics?: string;
+}) {
+  const ai = getGeminiAI();
+  const types =
+    opts.questionTypes && opts.questionTypes.length
+      ? opts.questionTypes
+      : ["multiple-choice", "true-false", "fill-in-the-blank"];
+  const hasFiles = opts.parts.length > 0;
+  const modeInstr = hasFiles
+    ? opts.mode === "creative"
+      ? "以提供的講義為基礎出題，可適度延伸相關但合理的概念。"
+      : "只能根據提供的講義內容出題，嚴格不要超出講義範圍。"
+    : "";
+
+  const instruction =
+    `You are an expert exam author. Generate exactly ${opts.count} exam questions in Traditional Chinese (繁體中文) ` +
+    `for the course "${opts.course}". Allowed question types ONLY: ${types.join(", ")}. ` +
+    (hasFiles ? `${modeInstr} ` : opts.topics ? `Cover these topics/chapters: ${opts.topics}. ` : "") +
+    (opts.contentFocus ? `Additional focus/style instruction: "${opts.contentFocus}". ` : "") +
+    `For multiple-choice, provide an "options" array of {key,value} objects with keys A, B, C, D, and set correctAnswer to the correct key (e.g. "A"). ` +
+    `For true-false, correctAnswer must be "正確" or "錯誤". For fill-in-the-blank, correctAnswer is the expected answer text. ` +
+    `Vary difficulty across basic/medium/advanced. Questions and options MUST be Traditional Chinese. Return a JSON array.`;
+
+  const contents = [...opts.parts, instruction];
+
+  const result = await ai.models.generateContent({
+    model: "gemini-3.5-flash",
+    contents,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            type: { type: Type.STRING, enum: ["multiple-choice", "true-false", "fill-in-the-blank"] },
+            question: { type: Type.STRING },
+            options: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: { key: { type: Type.STRING }, value: { type: Type.STRING } },
+                required: ["key", "value"],
+              },
+            },
+            correctAnswer: { type: Type.STRING },
+            difficulty: { type: Type.STRING, enum: ["basic", "medium", "advanced"] },
+          },
+          required: ["type", "question", "correctAnswer", "difficulty"],
+        },
+      },
+    },
+  });
+
+  const raw = JSON.parse(result.text || "[]");
+  const POINTS: Record<string, number> = { basic: 4, medium: 5, advanced: 8 };
+  return (Array.isArray(raw) ? raw : []).map((q: any, i: number) => {
+    let options: { [k: string]: string } | undefined;
+    if (Array.isArray(q.options) && q.options.length) {
+      options = q.options.reduce((acc: any, o: any) => {
+        if (o && typeof o.key === "string") acc[o.key] = o.value;
+        return acc;
+      }, {});
+    }
+    return {
+      id: `gen-q-${i}`,
+      type: q.type,
+      question: q.question || "",
+      options,
+      correctAnswer: q.correctAnswer || "",
+      difficulty: q.difficulty || "medium",
+      points: POINTS[q.difficulty] ?? 5,
+    };
+  });
+}
+
 // 多訊號學籍配對改用共用模組 src/lib/matching（與前端同一份邏輯、有單元測試）
 
 // 列出並解析 Gmail 信件（不下載附件）— 給 pull 端點使用
@@ -558,6 +642,49 @@ app.post("/api/analyze-file", async (req, res) => {
   } catch (e: any) {
     console.error("AI File analysis error:", e);
     res.status(500).json({ error: "AI Analysis failed: " + e.message });
+  }
+});
+
+// 3b. AI 出題（紙本考卷）— 可上傳講義（多份、多格式）從內容出題
+app.post("/api/exam/generate", async (req, res) => {
+  try {
+    const { course, count, questionTypes, mode, contentFocus, topics, files } = req.body;
+    const n = Number(count);
+    if (!n || n < 1) return res.status(400).json({ error: "請指定題數（至少 1）。" });
+
+    // 把上傳的講義轉成 Gemini content 片段（docx/ipynb 擷文字、pdf/圖片多模態）
+    const parts: any[] = [];
+    const usedFiles: string[] = [];
+    const skippedFiles: string[] = [];
+    for (const f of Array.isArray(files) ? files : []) {
+      try {
+        const buf = Buffer.from(f.base64 || "", "base64");
+        const part = await buildGradingPart(buf, f.mimeType, f.filename);
+        if (part) {
+          parts.push(part);
+          usedFiles.push(f.filename);
+        } else {
+          skippedFiles.push(f.filename);
+        }
+      } catch {
+        skippedFiles.push(f.filename);
+      }
+    }
+
+    const questions = await generateExamWithGemini({
+      parts,
+      course: course || "課程",
+      count: n,
+      questionTypes,
+      mode,
+      contentFocus,
+      topics,
+    });
+
+    res.json({ questions, usedFiles, skippedFiles });
+  } catch (e: any) {
+    console.error("Exam generate error:", e);
+    res.status(500).json({ error: "AI 出題失敗: " + e.message });
   }
 });
 

@@ -7,12 +7,13 @@ import GradingDashboard from "./components/GradingDashboard";
 import GradeBook from "./components/GradeBook";
 import SubmissionOverview from "./components/SubmissionOverview";
 import ClassroomTools from "./components/ClassroomTools";
-import { GraduationCap, BarChart3, FolderSync, MailQuestion, Sheet, Save, RefreshCw, Layers, Check, Loader, ClipboardList, Grid3x3 } from "lucide-react";
+import ExamGenerator from "./components/ExamGenerator";
+import { GraduationCap, BarChart3, FolderSync, MailQuestion, Sheet, Save, RefreshCw, Layers, Check, Loader, ClipboardList, Grid3x3, FileText } from "lucide-react";
 
 export default function App() {
   const [dbState, setDbState] = useState<DatabaseState | null>(null);
   const [selectedCourseId, setSelectedCourseId] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "folder" | "gmail" | "gradebook" | "submissions" | "classroom">("dashboard");
+  const [activeTab, setActiveTab] = useState<"dashboard" | "courses" | "folder" | "gmail" | "gradebook" | "submissions" | "classroom" | "exam">("dashboard");
   const [isSaving, setIsSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [saveError, setSaveError] = useState<string | null>(null); // 儲存失敗時顯示，避免「以為存到了其實沒存」
@@ -162,6 +163,21 @@ export default function App() {
           </button>
 
           <button
+            onClick={() => setActiveTab("exam")}
+            className={`w-full text-left px-4 py-2.5 rounded transition flex items-center justify-between text-xs font-semibold ${
+              activeTab === "exam"
+                ? "bg-slate-800 text-white border-l-4 border-blue-500 font-bold"
+                : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <FileText className="w-4 h-4 text-slate-400" />
+              <span>AI 紙本考卷</span>
+            </div>
+            {activeTab === "exam" && <div className="w-2.5 h-2.5 bg-blue-500 rounded-full"></div>}
+          </button>
+
+          <button
             onClick={() => setActiveTab("folder")}
             className={`w-full text-left px-4 py-2.5 rounded transition flex items-center justify-between text-xs font-semibold ${
               activeTab === "folder"
@@ -284,6 +300,14 @@ export default function App() {
               }`}
             >
               課堂工具
+            </button>
+            <button
+              onClick={() => setActiveTab("exam")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded transition ${
+                activeTab === "exam" ? "bg-slate-800 text-white font-black" : "text-slate-400 hover:text-slate-200"
+              }`}
+            >
+              紙本考卷
             </button>
             <button
               onClick={() => setActiveTab("folder")}
@@ -427,6 +451,15 @@ export default function App() {
                 <ClassroomTools
                   courses={courses}
                   selectedCourseId={selectedCourseId}
+                />
+              )}
+
+              {activeTab === "exam" && (
+                <ExamGenerator
+                  courses={courses}
+                  selectedCourseId={selectedCourseId}
+                  examPapers={dbState.examPapers ?? []}
+                  onUpdateExamPapers={(papers) => handleSaveDatabase({ ...dbState, examPapers: papers })}
                 />
               )}
 
