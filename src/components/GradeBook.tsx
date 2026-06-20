@@ -42,6 +42,9 @@ export default function GradeBook({
   const [bulkScore, setBulkScore] = useState("");
   const [bulkOnlyEmpty, setBulkOnlyEmpty] = useState(true);
 
+  // 匯出時把「未評分／缺考」輸出為 0（給上傳校務系統用）
+  const [exportZeroForMissing, setExportZeroForMissing] = useState(true);
+
   // 全班加減分（一次調整所有人的個人加減分）
   const [showBulkAdj, setShowBulkAdj] = useState(false);
   const [bulkAdjValue, setBulkAdjValue] = useState("");
@@ -97,6 +100,19 @@ export default function GradeBook({
 
     const updatedCourses = courses.map((c) => (c.id === currentCourse.id ? updatedCourse : c));
     onUpdateCourses(updatedCourses);
+    setEditingCell(null);
+  };
+
+  // 標記缺考/缺交：移除分數、狀態設 absent（與「還沒評」區分；計算仍以 0 計）
+  const handleMarkAbsent = (studentId: string, asstId: string) => {
+    const updatedStudents = students.map((stud) => {
+      if (stud.id !== studentId) return stud;
+      const g = { ...stud.grades };
+      delete g[asstId];
+      return { ...stud, grades: g, submitStatus: { ...stud.submitStatus, [asstId]: "absent" as const } };
+    });
+    const updatedCourse = { ...currentCourse, students: updatedStudents };
+    onUpdateCourses(courses.map((c) => (c.id === currentCourse.id ? updatedCourse : c)));
     setEditingCell(null);
   };
 
@@ -166,10 +182,12 @@ export default function GradeBook({
         student.email,
       ];
 
-      // Add scores
+      // Add scores（未評/缺考：依設定輸出 0，或保留「缺考」/「-」標記）
       assessments.forEach((a) => {
         const score = student.grades[a.id];
-        row.push(score != null ? score.toString() : "-");
+        if (score != null) row.push(score.toString());
+        else if (exportZeroForMissing) row.push("0");
+        else row.push(student.submitStatus[a.id] === "absent" ? "缺考" : "-");
       });
 
       // Add adjustment + overall grade
@@ -435,6 +453,11 @@ export default function GradeBook({
             <Upload className="w-3.5 h-3.5" />
             匯入成績
           </button>
+
+          <label className="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer" title="勾選後，未評分與缺考的格子匯出為 0（給上傳校務系統用）；取消則輸出「缺考」或「-」">
+            <input type="checkbox" checked={exportZeroForMissing} onChange={(e) => setExportZeroForMissing(e.target.checked)} className="w-3.5 h-3.5 accent-emerald-600 cursor-pointer" />
+            未評/缺考以 0 匯出
+          </label>
 
           <button
             onClick={handleExportCSV}
@@ -793,7 +816,6 @@ export default function GradeBook({
                                   max="100"
                                   value={editingScoreText}
                                   onChange={(e) => setEditingScoreText(e.target.value)}
-                                  onBlur={() => handleSaveCellGrade(student.id, asst.id)}
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter") handleSaveCellGrade(student.id, asst.id);
                                     if (e.key === "Escape") setEditingCell(null);
@@ -801,10 +823,26 @@ export default function GradeBook({
                                   className="w-10 text-center font-bold text-xs p-0.5 border border-blue-600 rounded bg-white text-blue-600 outline-none"
                                   autoFocus
                                 />
+                                <button
+                                  onMouseDown={(e) => { e.preventDefault(); handleSaveCellGrade(student.id, asst.id); }}
+                                  className="text-[10px] px-1 py-0.5 bg-blue-100 text-blue-700 rounded font-semibold hover:bg-blue-200"
+                                  title="存入分數（輸入 0 = 考0分）"
+                                >存</button>
+                                <button
+                                  onMouseDown={(e) => { e.preventDefault(); handleMarkAbsent(student.id, asst.id); }}
+                                  className="text-[10px] px-1 py-0.5 bg-amber-100 text-amber-700 rounded font-semibold hover:bg-amber-200"
+                                  title="標記為缺考/缺交（以 0 計入成績）"
+                                >缺考</button>
                               </div>
                             ) : (
                               <div className="group relative">
-                                <span>{scoreVal != null ? scoreVal : "-"}</span>
+                                {scoreVal != null ? (
+                                  <span>{scoreVal}</span>
+                                ) : student.submitStatus[asst.id] === "absent" ? (
+                                  <span className="text-amber-600 text-[11px] font-semibold">缺考</span>
+                                ) : (
+                                  <span>-</span>
+                                )}
                                 {feedbackText && (
                                   <MessageSquare className="w-3 h-3 text-blue-500 text-blue-500 inline ml-1 inline-block opacity-45 group-hover:opacity-100 transition" />
                                 )}

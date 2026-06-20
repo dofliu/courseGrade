@@ -1,14 +1,14 @@
 import { Course, Student } from "../types";
 import { studentTotal, hasAnyGrade, findFinalAssessment, neededOnFinal as calcNeededOnFinal } from "../lib/grades";
-import { ClipboardList, CheckCircle2, Clock, XCircle, Lock } from "lucide-react";
+import { ClipboardList, CheckCircle2, Clock, XCircle, Lock, AlertTriangle } from "lucide-react";
 
 interface SubmissionOverviewProps {
   courses: Course[];
   selectedCourseId: string;
 }
 
-// 一格的狀態：已評分 / 已繳待評 / 未開放 / 未繳
-type CellState = "graded" | "submitted" | "unreleased" | "missing";
+// 一格的狀態：已評分 / 已繳待評 / 未開放 / 缺考 / 未繳
+type CellState = "graded" | "submitted" | "unreleased" | "absent" | "missing";
 
 export default function SubmissionOverview({
   courses,
@@ -32,6 +32,7 @@ export default function SubmissionOverview({
     const st = s.submitStatus[aId];
     if (st === "submitted") return "submitted";
     if (st === "unreleased") return "unreleased";
+    if (st === "absent") return "absent";
     return "missing";
   };
 
@@ -85,6 +86,13 @@ export default function SubmissionOverview({
     if (st === "unreleased") {
       return <span className="text-slate-300 text-[10px]">未開放</span>;
     }
+    if (st === "absent") {
+      return (
+        <span className="px-2 py-0.5 bg-amber-50 text-amber-700 border border-amber-200 rounded text-[10px] font-semibold whitespace-nowrap">
+          缺考
+        </span>
+      );
+    }
     return (
       <span className="px-2 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded text-[10px] font-semibold whitespace-nowrap">
         未繳
@@ -111,6 +119,7 @@ export default function SubmissionOverview({
           <span className="flex items-center gap-1 text-slate-600"><CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />已評分（分數）</span>
           <span className="flex items-center gap-1 text-amber-700"><Clock className="w-3.5 h-3.5 text-amber-600" />已繳待評</span>
           <span className="flex items-center gap-1 text-red-600"><XCircle className="w-3.5 h-3.5 text-red-500" />未繳</span>
+          <span className="flex items-center gap-1 text-amber-700"><AlertTriangle className="w-3.5 h-3.5 text-amber-600" />缺考</span>
           <span className="flex items-center gap-1 text-slate-400"><Lock className="w-3.5 h-3.5 text-slate-300" />未開放</span>
         </div>
       </div>

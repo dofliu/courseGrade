@@ -18,7 +18,7 @@ export interface Student {
   email: string; // email matching gmail sender
   grades: { [assessmentId: string]: number }; // score dictionary, e.g. { "hw1": 85 }
   feedback: { [assessmentId: string]: string }; // details/comments dictionary, e.g. { "hw1": "作業優秀" }
-  submitStatus: { [assessmentId: string]: "submitted" | "missing" | "unreleased" }; // tracking submit state
+  submitStatus: { [assessmentId: string]: "submitted" | "missing" | "unreleased" | "absent" }; // 繳交狀態（absent=缺考/缺交，與「還沒評」區分）
   adjustment?: number; // 個人額外加減分（看平時表現），直接加到累計加權分；可為負
   adjustmentNote?: string; // 加減分原因備註
 }
