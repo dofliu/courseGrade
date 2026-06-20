@@ -1,6 +1,11 @@
 {
-  "name": "學生課程評分系統",
-  "description": "整合 AI 檔案分析與 Gmail 自動化的學生智慧評分助手，支援批次評分與未交統計。",
+  "name": "EduGrade AI",
+  "name_zh": "智慧評分助理",
+  "version": "2026.06",
+  "description": "AI-assisted university course grading assistant integrating Gemini and Gmail: offline batch grading, docx/ipynb support, submission tracking, accumulated weighted scoring, AI exam generation with Word export, and classroom tools.",
+  "description_zh": "整合 Gemini AI 與 Gmail 的大學課程評分助理：離線批次評分、Word/Notebook 評分、繳交追蹤、累計加權成績、依講義 AI 出題並匯出 Word，以及課堂抽籤點名工具。",
+  "author": "Juihung Liu (劉瑞弘) · NCUT 智慧自動化工程系",
+  "license": "private",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

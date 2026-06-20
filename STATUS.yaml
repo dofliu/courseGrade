@@ -1,10 +1,10 @@
 name: EduGrade AI
 name_zh: 智慧評分助理
 category: edtech
-progress: 92
+progress: 94
 status: active
 last_updated: "2026-06-20"
-next_milestone: "真正打包桌面 App、API 端點測試、及格門檻可設定"
+next_milestone: "真正打包桌面 App、API 端點測試、及格門檻課程層級可設定"
 technologies:
   - React
   - TypeScript
@@ -13,8 +13,10 @@ technologies:
   - Express
   - Gemini API
   - mammoth
+  - docx
+  - Vitest
 outputs:
   - tool
-description: "AI-assisted course grading assistant with offline Gmail intake, docx grading, and submission tracking"
-description_zh: "整合 Gemini 3.5 Flash 的課程評分助理：Gmail 離線批次評分、Word 文件評分、繳交追蹤與累計加權成績"
-key_metrics: "6 大功能頁、Gmail 離線暫存、多訊號學籍配對、累計加權分計算"
+description: "AI-assisted course grading assistant: offline Gmail intake, docx/ipynb grading, submission tracking, AI exam generation with Word export, and classroom tools"
+description_zh: "整合 Gemini 3.5 Flash 的課程評分助理：Gmail 離線批次評分、Word/Notebook 評分、繳交追蹤、累計加權成績、依講義 AI 出題並匯出 Word，以及課堂抽籤點名工具"
+key_metrics: "8 大功能頁、Gmail 離線暫存、多訊號學籍配對、累計加權分、AI 出題＋docx 匯出、72 項單元測試"
