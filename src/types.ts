@@ -31,8 +31,88 @@ export interface Course {
   students: Student[];
 }
 
+// ====== UniCourse 整合：班級經營(B) / 跨學期成績(C) / 紙本考卷(A) ======
+
+// ---- 班級經營（B）----
+export interface HomeroomClass {
+  classCode: string;        // 標準班級代碼（主鍵）
+  className: string;        // 顯示名稱
+  enrollmentYear?: number;  // 入學年（學年制）
+}
+
+export interface RosterStudent {
+  studentId: string;        // 學號（主鍵）
+  name: string;
+  classCode?: string;       // 對應 HomeroomClass.classCode
+  className?: string;       // 顯示用
+  email?: string;
+  housing?: "dorm" | "off-campus";
+  dormRoom?: string;
+  mobile?: string;
+  address?: string;
+  homeAddress?: string;
+  homePhone?: string;
+  parentName?: string;
+  parentPhone1?: string;
+  parentPhone2?: string;
+  note?: string;
+}
+
+export interface ClassOfficer {
+  id: string;               // uuid
+  classCode: string;
+  term: string;             // 如 "114-1"
+  title: string;            // 職稱（班長、副班長…）
+  studentId: string;
+  appointedDate?: string;   // ISO date
+  notes?: string;
+}
+
+// ---- 跨學期成績（C）----
+export interface TranscriptEntry {
+  id: string;               // uuid
+  studentId: string;
+  classCode?: string;
+  year: number;             // 學年（如 114）
+  semester: number;         // 學期（1 或 2）
+  subject: string;
+  score: number;
+  credits: number;
+  gradeType?: string;       // 必修/選修/通識…
+  // isPassed 一律由 score >= 60 即時計算，不存
+}
+
+// ---- AI 紙本考卷（A）----
+export type ExamQuestionType = "multiple-choice" | "true-false" | "fill-in-the-blank";
+export type ExamDifficulty = "basic" | "medium" | "advanced";
+
+export interface ExamQuestion {
+  id: string;
+  type: ExamQuestionType;
+  question: string;
+  options?: { [key: string]: string };  // 選擇題用 A/B/C/D
+  correctAnswer: string;
+  difficulty: ExamDifficulty;
+  points: number;
+}
+
+export interface ExamPaper {
+  id: string;
+  courseId: string;
+  title: string;
+  topics: string;           // 章節範圍
+  createdAt: number;
+  questions: ExamQuestion[];
+}
+
+// ---- 擴充總狀態（新集合一律 optional，向後相容既有 db.json）----
 export interface DatabaseState {
-  courses: Course[];
+  courses: Course[];                  // 既有，不動
+  homeroomClasses?: HomeroomClass[];  // 新（B）
+  roster?: RosterStudent[];           // 新（B）
+  transcripts?: TranscriptEntry[];    // 新（C）
+  officers?: ClassOfficer[];          // 新（B）
+  examPapers?: ExamPaper[];           // 新（A）
 }
 
 // Simulated file for local upload preview
