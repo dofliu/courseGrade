@@ -73,15 +73,18 @@
 
 ## ⏳ 待辦 / 下一步
 
-> 下一步討論已開成 GitHub issue（見 repo Issues），下方為總清單。
+> GitHub Issues #1–#5 已處理完畢（#2/#3/#4 已實作關閉、#1 Electron 已完成、#5 暫緩關閉）。
 
-- [ ] **真正打包桌面 App**（Tauri/Electron）— 目前以啟動器達成「雙擊啟動、免終端機」（#架構決策）
-- [ ] **API 端點測試**：cache 來回、analyze-cached guard、exam/generate 的 supertest 整合測試
-- [ ] **及格門檻課程層級可設定**：目前固定 60，待做成每門課可調
-- [ ] **評分標準範本庫**：常用 rubric 可儲存重用，出題／評分共用
-- [ ] **批次評分進度條／可中止**：大量信件時的進度顯示與取消
-- [ ] **整合 C：跨學期成績**（transcripts）— 暫緩，待評估
-- [ ] **整合 B：班級經營**（homeroom / officers）— 暫緩，待評估
+### ✅ 本波完成（Issues）
+- [x] **打包桌面 App（Electron）**（#1）— `electron/main.cjs` 內嵌 Express 伺服器、`npm run electron:start`／`electron:build`
+- [x] **後端 API 端點整合測試**（#2）— supertest 13 項，server 以 `EDUGRADE_DATA_DIR/EDUGRADE_NO_LISTEN` 可測試化
+- [x] **及格門檻課程層級可設定 + 評分標準範本庫**（#3）
+- [x] **批次評分進度條／可中止**（#4）— 資料夾批次與 Gmail 離線兩處
+
+### 後續可做
+- [ ] **整合 C：跨學期成績**（transcripts）— 暫緩（#5 決議）
+- [ ] **整合 B：班級經營**（homeroom / officers）— 暫緩（#5 決議）
+- [ ] **桌面版設定 UI**：app 內填 `GEMINI_API_KEY`（目前用環境變數／config.json），及自動更新
 - [ ] **舊版 `.doc`／`.xlsx`**：目前略過，評估是否支援（.doc 需額外轉換）
 - [ ] **成績匯入支援姓名欄**：目前以「學號 分數」為主，姓名比對為備援
 - [ ] **加分題上限處理**：含加分權重時累計分可超過 100，視需要顯示提示

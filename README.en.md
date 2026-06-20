@@ -54,6 +54,16 @@ After `npm install`, you can later just:
 
 > Only the Gmail intake feature needs `VITE_GOOGLE_CLIENT_ID`; everything else (folder batch, gradebook, submissions, dashboard, exam generation, classroom tools) needs only `GEMINI_API_KEY`.
 
+### Desktop app (Electron)
+Package the whole thing (frontend + Express backend) as a Windows desktop app:
+
+```bash
+npm run electron:start    # build, then open in a desktop window (embedded server)
+npm run electron:build    # produce a Windows installer (output in release/)
+```
+
+The desktop build stores grades/backups/Gmail cache under `%APPDATA%/EduGrade AI`. `GEMINI_API_KEY` resolves from the environment, then from `%APPDATA%/EduGrade AI/edugrade-config.json`. The Electron main process (`electron/main.cjs`) `require`s the existing `dist/server.cjs` in-process and polls `/api/version` before opening the window.
+
 ### Gmail OAuth setup
 1. Pick a project in the [Google Cloud Console](https://console.cloud.google.com/)
 2. APIs & Services → enable **Gmail API**

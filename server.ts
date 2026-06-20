@@ -1057,7 +1057,8 @@ async function startServer() {
     app.use(vite.middlewares);
     console.log("Starting in DEVELOPMENT mode with Vite Middleware.");
   } else {
-    const distPath = path.join(process.cwd(), "dist");
+    // 打包成桌面 App（Electron）後 process.cwd() 不是 app 目錄，故允許用 EDUGRADE_DIST_DIR 指定
+    const distPath = process.env.EDUGRADE_DIST_DIR || path.join(process.cwd(), "dist");
     try {
       await fs.access(distPath);
       app.use(express.static(distPath));

@@ -54,6 +54,18 @@ npm run lint     # 型別檢查（tsc --noEmit）
 
 > 三者底層都是 `scripts/launch.mjs`：起動伺服器 → 等就緒 → 開 `http://localhost:3000`。
 
+### 打包成桌面 App（Electron）
+把整套（前端 + Express 後端）包成 Windows 桌面程式，不需終端機、不需 `npm run dev`：
+
+```bash
+npm run electron:start    # 先 build 再以桌面視窗開啟（內嵌伺服器，等同打包後的執行體驗）
+npm run electron:build    # 產生 Windows 安裝檔（輸出在 release/）
+```
+
+- 桌面版的成績／備份／Gmail 暫存都寫在使用者資料夾（`%APPDATA%/EduGrade AI`），不是專案目錄。
+- `GEMINI_API_KEY` 解析順序：環境變數 → `%APPDATA%/EduGrade AI/edugrade-config.json` 的 `geminiApiKey`。沒設也能開，只是 AI 評分／出題會在使用時提示缺 key。
+- Electron 主行程在 `electron/main.cjs`：設好 `NODE_ENV/PORT/EDUGRADE_DATA_DIR/EDUGRADE_DIST_DIR` 後直接 `require` 既有的 `dist/server.cjs`（內嵌伺服器），輪詢 `/api/version` 就緒後再開視窗。
+
 > 只用「資料夾批次 / 成績簿 / 繳交總覽 / 儀表板 / 出題 / 課堂工具」的話只需要 `GEMINI_API_KEY`；
 > Gmail 收件功能才需要 `VITE_GOOGLE_CLIENT_ID`。
 
