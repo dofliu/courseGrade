@@ -10,6 +10,10 @@ const http = require("http");
 const PORT = Number(process.env.EDUGRADE_PORT) || 3100;
 const BASE_URL = `http://localhost:${PORT}`;
 
+// 統一 app 名稱，讓 userData 落在 %APPDATA%/EduGrade AI（否則會用 package.json 的 name=react-example）
+// 必須在 app ready 前呼叫才會影響 getPath("userData")
+app.setName("EduGrade AI");
+
 let mainWindow = null;
 
 // 讀取 Gemini API Key：環境變數 > userData/edugrade-config.json
@@ -39,8 +43,9 @@ function startEmbeddedServer() {
   process.env.NODE_ENV = "production";
   process.env.PORT = String(PORT);
   process.env.EDUGRADE_DIST_DIR = path.join(root, "dist");
-  // 成績/暫存/備份都寫到使用者資料夾，打包後仍可讀寫
-  process.env.EDUGRADE_DATA_DIR = app.getPath("userData");
+  // 資料目錄：打包後寫到使用者資料夾（%APPDATA%/EduGrade AI）；
+  // 開發/electron:start 直接用專案目錄，沿用既有 db.json，不會另建空檔。
+  process.env.EDUGRADE_DATA_DIR = app.isPackaged ? app.getPath("userData") : root;
   const key = resolveGeminiKey();
   if (key) process.env.GEMINI_API_KEY = key;
 

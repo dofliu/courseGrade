@@ -62,7 +62,7 @@ npm run electron:start    # 先 build 再以桌面視窗開啟（內嵌伺服器
 npm run electron:build    # 產生 Windows 安裝檔（輸出在 release/）
 ```
 
-- 桌面版的成績／備份／Gmail 暫存都寫在使用者資料夾（`%APPDATA%/EduGrade AI`），不是專案目錄。
+- **資料位置**：`npm run electron:start`（未打包）直接用**專案目錄的 `db.json`**，沿用你現有的課程成績；只有**打包安裝後**才改用使用者資料夾 `%APPDATA%/EduGrade AI`（全新一份，可在 app 內匯入）。
 - `GEMINI_API_KEY` 解析順序：環境變數 → `%APPDATA%/EduGrade AI/edugrade-config.json` 的 `geminiApiKey`。沒設也能開，只是 AI 評分／出題會在使用時提示缺 key。
 - Electron 主行程在 `electron/main.cjs`：設好 `NODE_ENV/PORT/EDUGRADE_DATA_DIR/EDUGRADE_DIST_DIR` 後直接 `require` 既有的 `dist/server.cjs`（內嵌伺服器），輪詢 `/api/version` 就緒後再開視窗。
 
