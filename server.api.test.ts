@@ -139,16 +139,15 @@ describe("GET/POST /api/settings（Gemini API key）", () => {
     expect(res.body.modelOptions.length).toBeGreaterThan(0);
   });
 
-  it("POST 切換模型 → 200、寫入 config 並反映在 GET（除非被 env 鎖定）", async () => {
+  it("POST 切換模型 → 200、寫入 config 並反映在 GET（app 設定優先，即使有 env）", async () => {
     const res = await request(app).post("/api/settings/gemini-model").send({ model: "gemini-3.1-flash-lite" });
     expect(res.status).toBe(200);
     expect(res.body.success).toBe(true);
+    expect(res.body.geminiModel).toBe("gemini-3.1-flash-lite");
     const cfg = JSON.parse(await fs.readFile(path.join(dataDir, "edugrade-config.json"), "utf-8"));
     expect(cfg.geminiModel).toBe("gemini-3.1-flash-lite");
-    if (!process.env.GEMINI_MODEL) {
-      const after = await request(app).get("/api/settings");
-      expect(after.body.geminiModel).toBe("gemini-3.1-flash-lite");
-    }
+    const after = await request(app).get("/api/settings");
+    expect(after.body.geminiModel).toBe("gemini-3.1-flash-lite");
   });
 
   it("POST 空模型 → 400", async () => {

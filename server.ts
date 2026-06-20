@@ -66,7 +66,9 @@ let geminiModel = DEFAULT_GEMINI_MODEL;
     geminiApiKey = cfg.geminiApiKey;
     geminiKeySource = "config";
   }
-  geminiModel = process.env.GEMINI_MODEL || (typeof cfg.geminiModel === "string" && cfg.geminiModel) || DEFAULT_GEMINI_MODEL;
+  // 模型優先序：app 內設定（config）> 環境變數 GEMINI_MODEL > 預設。
+  // 模型非機密，讓使用者在 app 內的選擇優先，不會被系統環境變數鎖死。
+  geminiModel = (typeof cfg.geminiModel === "string" && cfg.geminiModel) || process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL;
 })();
 
 const maskKey = (k: string) => (k ? (k.length > 6 ? "…" + k.slice(-4) : "****") : "");
@@ -599,7 +601,7 @@ app.get("/api/settings", (_req, res) => {
     geminiKeyMasked: maskKey(geminiApiKey),
     geminiKeySource,
     geminiModel,
-    geminiModelFromEnv: !!process.env.GEMINI_MODEL,
+    geminiModelEnv: process.env.GEMINI_MODEL || "", // 系統有設的話顯示提示用（但 app 設定優先，不鎖定）
     modelOptions: GEMINI_MODELS,
   });
 });
@@ -652,9 +654,8 @@ app.post("/api/settings/gemini-model", async (req, res) => {
     await fs.mkdir(DATA_DIR, { recursive: true });
     await atomicWriteJson(CONFIG_FILE, cfg);
 
-    const envWins = !!process.env.GEMINI_MODEL;
-    if (!envWins) geminiModel = model; // 模型只是參數，不需重置 client
-    res.json({ success: true, geminiModel, overriddenByEnv: envWins });
+    geminiModel = model; // app 設定優先，立即生效（模型只是參數，不需重置 client）
+    res.json({ success: true, geminiModel });
   } catch (e: any) {
     res.status(500).json({ error: "儲存模型失敗: " + e.message });
   }

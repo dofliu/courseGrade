@@ -10,7 +10,7 @@ interface SettingsStatus {
   geminiKeyMasked: string;
   geminiKeySource: "env" | "config" | "none";
   geminiModel: string;
-  geminiModelFromEnv: boolean;
+  geminiModelEnv: string;
   modelOptions: ModelOption[];
 }
 
@@ -50,11 +50,7 @@ export default function ApiKeySettings({ onChange }: { onChange?: () => void }) 
       });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || "儲存失敗");
-      setModelMsg(
-        d.overriddenByEnv
-          ? "已存檔，但目前由環境變數 GEMINI_MODEL 優先（要改用此模型需清掉環境變數）。"
-          : `✓ 已切換為 ${d.geminiModel}。`
-      );
+      setModelMsg(`✓ 已切換為 ${d.geminiModel}，即時生效。`);
       load();
       onChange?.();
     } catch (e: any) {
@@ -138,14 +134,13 @@ export default function ApiKeySettings({ onChange }: { onChange?: () => void }) 
       <div className="pt-2 border-t border-slate-100">
         <label className="text-xs font-medium text-slate-600 flex items-center gap-1.5 mb-1.5">
           <Cpu className="w-3.5 h-3.5 text-blue-600" />
-          AI 模型{status?.geminiModelFromEnv && <span className="text-[10px] text-amber-600">（環境變數鎖定）</span>}
+          AI 模型
         </label>
         <div className="flex items-center gap-2">
           <select
             value={(status?.modelOptions || []).some((o) => o.id === model) ? model : "__custom__"}
             onChange={(e) => { if (e.target.value !== "__custom__") setModel(e.target.value); }}
-            disabled={status?.geminiModelFromEnv}
-            className="flex-1 text-xs px-2 py-2 border border-slate-200 rounded outline-none focus:border-blue-500 bg-white text-slate-700 disabled:opacity-50"
+            className="flex-1 text-xs px-2 py-2 border border-slate-200 rounded outline-none focus:border-blue-500 bg-white text-slate-700"
           >
             {(status?.modelOptions || []).map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
             <option value="__custom__">自訂（手動輸入 id）…</option>
@@ -156,13 +151,12 @@ export default function ApiKeySettings({ onChange }: { onChange?: () => void }) 
             type="text"
             value={model}
             onChange={(e) => setModel(e.target.value)}
-            disabled={status?.geminiModelFromEnv}
             placeholder="模型 id，如 gemini-3.1-flash-lite"
-            className="flex-1 text-xs px-3 py-1.5 border border-slate-200 rounded outline-none focus:border-blue-500 font-mono disabled:opacity-50"
+            className="flex-1 text-xs px-3 py-1.5 border border-slate-200 rounded outline-none focus:border-blue-500 font-mono"
           />
           <button
             onClick={saveModel}
-            disabled={savingModel || !model.trim() || status?.geminiModelFromEnv}
+            disabled={savingModel || !model.trim()}
             className="px-3 py-1.5 bg-slate-900 text-white rounded text-xs font-semibold hover:bg-slate-800 transition flex items-center gap-1.5 disabled:opacity-50"
           >
             {savingModel ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
@@ -170,6 +164,9 @@ export default function ApiKeySettings({ onChange }: { onChange?: () => void }) 
           </button>
         </div>
         {modelMsg && <div className="text-[11px] text-slate-500 leading-relaxed mt-1">{modelMsg}</div>}
+        {status?.geminiModelEnv && status.geminiModel !== status.geminiModelEnv && (
+          <div className="text-[10px] text-slate-400 mt-1">系統環境變數 GEMINI_MODEL={status.geminiModelEnv}，但 app 設定優先。</div>
+        )}
       </div>
 
       <a
