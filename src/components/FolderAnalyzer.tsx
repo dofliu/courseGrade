@@ -20,8 +20,12 @@ export default function FolderAnalyzer({
   const [isProcessing, setIsProcessing] = useState(false);
   const [analyzedLogs, setAnalyzedLogs] = useState<string[]>([]);
   const [skipGraded, setSkipGraded] = useState(true); // 已評分（該生該項目已有分數）就略過、不再呼叫 AI
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string } | null>(null);
+  const [aborting, setAborting] = useState(false); // 顯示「停止中…」用（ref 不會觸發重繪）
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const abortRef = useRef(false); // 使用者按「中止」時設 true，迴圈每輪檢查
+  const fetchAbortRef = useRef<AbortController | null>(null); // 中止進行中的 fetch
 
   const selectedCourse = courses.find((c) => c.id === targetCourseId) || courses[0];
 
@@ -126,12 +130,23 @@ export default function FolderAnalyzer({
     }
 
     setIsProcessing(true);
+    abortRef.current = false;
+    setAborting(false);
     setAnalyzedLogs((prev) => [...prev, `🚀 開始啟動 AI 批次分析排程...`]);
 
     const activeAssessment = selectedCourse.assessments.find((a) => a.id === targetAsstId);
     const updatedQueue = [...fileQueue];
+    // 進度分母：扣掉已完成的（重跑時不重數）
+    const pending = updatedQueue.filter((f) => f.status !== "completed").length;
+    let processed = 0;
+    setProgress({ done: 0, total: pending, name: "" });
 
     for (let i = 0; i < updatedQueue.length; i++) {
+      // 使用者中止：保留已完成結果，停止後續
+      if (abortRef.current) {
+        setAnalyzedLogs((prev) => [...prev, `⏹ 已中止批次，保留已完成的結果（可再按開始接續未完成者）。`]);
+        break;
+      }
       const file = updatedQueue[i];
       if (file.status === "completed") continue; // skip already completed
 
@@ -155,20 +170,25 @@ export default function FolderAnalyzer({
             ...prev,
             `⏭ 已評分，略過：${file.name}（${pre.name} ${pre.grades[targetAsstId]} 分）`,
           ]);
+          processed++;
+          setProgress({ done: processed, total: pending, name: file.name });
           continue;
         }
       }
 
       updatedQueue[i] = { ...file, status: "running" };
       setFileQueue([...updatedQueue]);
+      setProgress({ done: processed, total: pending, name: file.name });
       setAnalyzedLogs((prev) => [...prev, `⚙️ 正在評分並辨識檔案: "${file.name}"...`]);
 
       try {
+        fetchAbortRef.current = new AbortController();
         const response = await fetch("/api/analyze-file", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
+          signal: fetchAbortRef.current.signal,
           body: JSON.stringify({
             fileContent: file.base64,
             mimeType: file.type,
@@ -215,6 +235,13 @@ export default function FolderAnalyzer({
         }
 
       } catch (err: any) {
+        // 使用者中止造成的 fetch 取消：把這份還原為待處理、不算失敗，並停止
+        if (abortRef.current || err?.name === "AbortError") {
+          updatedQueue[i] = { ...file, status: "idle" };
+          setFileQueue([...updatedQueue]);
+          setAnalyzedLogs((prev) => [...prev, `⏹ 已中止批次，保留已完成的結果（可再按開始接續未完成者）。`]);
+          break;
+        }
         console.error("Single file AI fail:", err);
         updatedQueue[i] = {
           ...file,
@@ -224,16 +251,28 @@ export default function FolderAnalyzer({
         setAnalyzedLogs((prev) => [...prev, `❌ 辨識失敗: ${file.name} - ${err.message || "錯誤"}`]);
       }
 
+      processed++;
+      setProgress({ done: processed, total: pending, name: file.name });
       setFileQueue([...updatedQueue]);
     }
 
     setIsProcessing(false);
+    setProgress(null);
+    setAborting(false);
+    fetchAbortRef.current = null;
     const skippedCount = updatedQueue.filter((f) => f.status === "skipped").length;
     const doneCount = updatedQueue.filter((f) => f.status === "completed").length;
     setAnalyzedLogs((prev) => [
       ...prev,
       `🎉 批次處理完畢！新評分 ${doneCount} 份${skippedCount > 0 ? `，略過已評分 ${skippedCount} 份` : ""}。`,
     ]);
+  };
+
+  // 中止批次：設旗標讓迴圈停在下一輪，並取消進行中的 fetch
+  const abortBatch = () => {
+    abortRef.current = true;
+    setAborting(true);
+    fetchAbortRef.current?.abort();
   };
 
   // Modify AI results manually
@@ -456,6 +495,17 @@ export default function FolderAnalyzer({
                 )}
               </button>
 
+              {isProcessing && (
+                <button
+                  onClick={abortBatch}
+                  disabled={aborting}
+                  className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded text-xs font-semibold hover:bg-red-100 transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {aborting ? "停止中…" : "中止"}
+                </button>
+              )}
+
               <button
                 onClick={saveGradesToDatabase}
                 disabled={completedCount === 0 || isProcessing}
@@ -466,6 +516,22 @@ export default function FolderAnalyzer({
               </button>
             </div>
           </div>
+
+          {/* 批次進度條 */}
+          {progress && progress.total > 0 && (
+            <div className="mb-4">
+              <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
+                <span className="truncate max-w-[70%]">處理中：{progress.name || "…"}</span>
+                <span className="font-semibold text-slate-600">{progress.done} / {progress.total}</span>
+              </div>
+              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 transition-all duration-300"
+                  style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* Queue files list */}
           <div className="space-y-4 max-h-[550px] overflow-y-auto pr-1">

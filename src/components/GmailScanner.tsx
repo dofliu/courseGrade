@@ -49,6 +49,10 @@ export default function GmailScanner({
   const [isScanning, setIsScanning] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [scanLogs, setScanLogs] = useState<string[]>([]);
+  const [progress, setProgress] = useState<{ done: number; total: number; name: string } | null>(null);
+  const [aborting, setAborting] = useState(false);
+  const abortRef = useRef(false);                                   // 批次中止旗標
+  const fetchAbortRef = useRef<AbortController | null>(null);       // 取消進行中的 fetch
 
   // 本機暫存：上次拉取時間（null 表示這個課程項目尚無暫存）
   const [pulledAt, setPulledAt] = useState<string | null>(null);
@@ -311,9 +315,11 @@ export default function GmailScanner({
       setScanLogs((prev) => [...prev, `⏳ 正在用本機附件「${attachLabel}」進行 AI 評分...`]);
 
       // 用本機已下載的附件評分，完全不需要 Google token
+      fetchAbortRef.current = new AbortController();
       const response = await fetch("/api/gmail/analyze-cached", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: fetchAbortRef.current.signal,
         body: JSON.stringify({
           courseId: targetCourseId,
           assessmentId: targetAsstId,
@@ -371,6 +377,11 @@ export default function GmailScanner({
       saveCache(next);
 
     } catch (e: any) {
+      // 使用者中止造成的取消：把這封還原為待評（清掉 running），不算失敗
+      if (abortRef.current || e?.name === "AbortError") {
+        applyUpdate({ status: "idle" });
+        return;
+      }
       console.error(e);
       const next = applyUpdate({ status: "failed" });
       setScanLogs((prev) => [...prev, `❌ 附件辨識出錯：「${attachLabel}」- ${e.message}`]);
@@ -399,15 +410,39 @@ export default function GmailScanner({
   // Batch analyse all matched emails sequentially
   const handleBatchAnalyze = async () => {
     setIsAnalyzing(true);
+    abortRef.current = false;
+    setAborting(false);
     const list = messagesRef.current;
+    const todo = list.filter(
+      (m) => m.attachments.length > 0 && m.status !== "completed" && m.status !== "unsupported" && !m.unsupported
+    );
+    let processed = 0;
+    setProgress({ done: 0, total: todo.length, name: "" });
     for (let i = 0; i < list.length; i++) {
+      if (abortRef.current) {
+        setScanLogs((prev) => [...prev, `⏹ 已中止批次，保留已完成的結果（可再按整批評分接續未完成者）。`]);
+        break;
+      }
       const m = list[i];
       // 已評分(completed) 與 格式不支援(unsupported) 都跳過，只處理未評/失敗且有附件的
       if (m.attachments.length > 0 && m.status !== "completed" && m.status !== "unsupported" && !m.unsupported) {
+        setProgress({ done: processed, total: todo.length, name: m.subject || m.fromEmail || `第 ${i + 1} 封` });
         await handleAnalyzeEmailAttachment(i);
+        processed++;
+        setProgress({ done: processed, total: todo.length, name: m.subject || m.fromEmail || `第 ${i + 1} 封` });
       }
     }
     setIsAnalyzing(false);
+    setProgress(null);
+    setAborting(false);
+    fetchAbortRef.current = null;
+  };
+
+  // 中止整批評分：設旗標讓迴圈停在下一封，並取消進行中的 fetch
+  const abortBatch = () => {
+    abortRef.current = true;
+    setAborting(true);
+    fetchAbortRef.current?.abort();
   };
 
   // Save Scanned Email Grades to course database
@@ -672,6 +707,17 @@ export default function GmailScanner({
                 批次 AI 評分
               </button>
 
+              {isAnalyzing && (
+                <button
+                  onClick={abortBatch}
+                  disabled={aborting}
+                  className="px-3.5 py-2 bg-red-50 text-red-600 border border-red-200 rounded text-xs font-semibold hover:bg-red-100 transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {aborting ? "停止中…" : "中止"}
+                </button>
+              )}
+
               <button
                 onClick={saveScannedGrades}
                 disabled={messages.filter((m) => m.status === "completed").length === 0 || isAnalyzing}
@@ -682,6 +728,22 @@ export default function GmailScanner({
               </button>
             </div>
           </div>
+
+          {/* 批次進度條 */}
+          {progress && progress.total > 0 && (
+            <div className="mb-1">
+              <div className="flex items-center justify-between text-[11px] text-slate-500 mb-1">
+                <span className="truncate max-w-[70%]">處理中：{progress.name || "…"}</span>
+                <span className="font-semibold text-slate-600">{progress.done} / {progress.total}</span>
+              </div>
+              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-500 transition-all duration-300"
+                  style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           {/* 本機暫存提示：信件與附件已存本機，可離線評分 */}
           {pulledAt && (
