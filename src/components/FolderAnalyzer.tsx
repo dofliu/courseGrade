@@ -80,14 +80,17 @@ export default function FolderAnalyzer({
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       // Accept pictures, scanned sheets, PDF, txt documents
-      const isAcceptable = file.type.startsWith("image/") || 
-                           file.type === "application/pdf" || 
+      const lower = file.name.toLowerCase();
+      const isAcceptable = file.type.startsWith("image/") ||
+                           file.type === "application/pdf" ||
                            file.type.startsWith("text/") ||
-                           file.name.endsWith(".txt") ||
-                           file.name.endsWith(".pdf") ||
-                           file.name.endsWith(".jpg") ||
-                           file.name.endsWith(".png") ||
-                           file.name.endsWith(".jpeg");
+                           lower.endsWith(".txt") ||
+                           lower.endsWith(".pdf") ||
+                           lower.endsWith(".jpg") ||
+                           lower.endsWith(".png") ||
+                           lower.endsWith(".jpeg") ||
+                           lower.endsWith(".ipynb") ||  // Jupyter Notebook（伺服器會擷取文字）
+                           lower.endsWith(".docx");      // Word（伺服器會擷取文字）
 
       if (!isAcceptable) continue;
 

@@ -268,6 +268,64 @@ async function writeGmailCache(courseId: string, assessmentId: string, data: any
   await fs.writeFile(gmailCachePath(courseId, assessmentId), JSON.stringify(data, null, 2), "utf-8");
 }
 
+// 從 Jupyter Notebook (.ipynb, 其實是 JSON) 擷取文字：Markdown + 程式碼 + 文字輸出。
+function extractNotebookText(buf: Buffer): string {
+  let nb: any;
+  try {
+    nb = JSON.parse(buf.toString("utf-8"));
+  } catch {
+    return "";
+  }
+  const cells = Array.isArray(nb.cells) ? nb.cells : [];
+  const parts: string[] = [];
+  for (const cell of cells) {
+    const src = Array.isArray(cell.source) ? cell.source.join("") : cell.source || "";
+    if (cell.cell_type === "markdown") {
+      if (src.trim()) parts.push("【Markdown】\n" + src);
+    } else if (cell.cell_type === "code") {
+      if (src.trim()) parts.push("【程式碼】\n" + src);
+      const outs = Array.isArray(cell.outputs) ? cell.outputs : [];
+      const outText = outs
+        .map((o: any) => {
+          if (o.text) return Array.isArray(o.text) ? o.text.join("") : o.text;
+          const tp = o.data && o.data["text/plain"];
+          if (tp) return Array.isArray(tp) ? tp.join("") : tp;
+          return "";
+        })
+        .join("")
+        .trim();
+      if (outText) parts.push("【輸出】\n" + outText.slice(0, 2000));
+    } else if (src.trim()) {
+      parts.push(src);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+// 依檔案型態組一個 Gemini content 片段（字串文字 或 {inlineData}）。不支援的格式回 null。
+// .ipynb / .docx 先擷取文字；圖片 / PDF / 純文字直接送原檔；其餘（.xlsx/壓縮檔…）回 null。
+async function buildGradingPart(buf: Buffer, mimeType: string, filename: string): Promise<any | null> {
+  const mt = String(mimeType || "").toLowerCase();
+  const fn = String(filename || "").toLowerCase();
+  if (fn.endsWith(".ipynb")) {
+    const text = extractNotebookText(buf);
+    return text.trim() ? `檔案「${filename}」(Jupyter Notebook 擷取)：\n${text}` : null;
+  }
+  if (mt.includes("wordprocessingml") || fn.endsWith(".docx")) {
+    let text = "";
+    try {
+      text = (await mammoth.extractRawText({ buffer: buf })).value || "";
+    } catch {
+      text = "";
+    }
+    return text.trim() ? `檔案「${filename}」(Word 擷取文字)：\n${text}` : null;
+  }
+  if (mt.startsWith("image/") || mt === "application/pdf" || mt.startsWith("text/")) {
+    return { inlineData: { mimeType: mimeType || "image/jpeg", data: buf.toString("base64") } };
+  }
+  return null;
+}
+
 // 共用的 Gemini 評分流程。吃「已組好的 content 片段陣列」（字串或 {inlineData}），
 // 可一次餵入一封信的多個附件（多頁掃描）一起評。
 async function gradeSubmissionWithGemini(opts: {
@@ -474,71 +532,22 @@ app.post("/api/analyze-file", async (req, res) => {
       return res.status(400).json({ error: "Missing file content" });
     }
 
-    const ai = getGeminiAI();
+    // 依檔案型態組片段：.ipynb / .docx 擷取文字；圖片 / PDF / 純文字直接送；其餘不支援
+    const buf = Buffer.from(fileContent, "base64");
+    const part = await buildGradingPart(buf, mimeType, fileName);
+    if (!part) {
+      return res.status(400).json({
+        error: `格式（${mimeType || fileName}）無法由 AI 直接評分，請轉成 PDF 或手動輸入分數。`,
+      });
+    }
 
-    // Prepare system instruction content
-    const systemPrompt = `You are an elite, highly precise university teaching assistant (TA) built to grade student papers, exams, and quizzes.
-Your grading is rigorous, fair, and encouraging. You speak and write exclusively in traditional Chinese (繁體中文).
-
-You are grading "${assessmentName}" (Description: ${description || "No specific details"}).
-${rubric ? `\nThe instructor has provided the following grading rubric / criteria. You MUST grade strictly according to it (scoring weights, key points, and deduction rules):\n"""\n${rubric}\n"""\n` : ""}
-Your job is to:
-1. Examine the submitted file (might be an image, screenshot, PDF, scanned sheet, or text document).
-2. Scan the file content or filename to determine the student name or student ID.
-3. Compare the detected name/ID with the class roster provided: ${JSON.stringify(roster)}. Output the closest student name/student ID match from this roster. If absolutely unable to identify, return an empty string for matched student.
-4. Grade the work out of 100 based on accuracy, effort, and completeness.
-5. Provide constructive, warm, and highly professional TA feedback (評語) in Traditional Chinese (Taiwan conventions) outlining what they did well, where they made mistakes, and instructions for how to improve.
-
-Return your response in clean JSON format matching the schema rules.`;
-
-    const modelToUse = "gemini-3.5-flash";
-
-    const imagePart = {
-      inlineData: {
-        mimeType: mimeType || "image/jpeg",
-        data: fileContent, // Base64 raw string
-      },
-    };
-
-    const textPrompt = `Filename: "${fileName}"
-Please identify the student, grade their work out of 100, and provide custom review feedback. Give detailed reasoning.`;
-
-    const result = await ai.models.generateContent({
-      model: modelToUse,
-      contents: [imagePart, textPrompt],
-      config: {
-        systemInstruction: systemPrompt,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            studentName: {
-              type: Type.STRING,
-              description: "The name of the student identified from the file or filename. Match with names in the roster if possible."
-            },
-            studentId: {
-              type: Type.STRING,
-              description: "The student ID (學號) identified from the document or roster."
-            },
-            score: {
-              type: Type.INTEGER,
-              description: "A grade score out of 100. Be fair and professional."
-            },
-            feedback: {
-              type: Type.STRING,
-              description: "Encouraging, strict and informative TA feedback in Traditional Chinese. Address specific contents of the file."
-            },
-            confidence: {
-              type: Type.NUMBER,
-              description: "Confidence from 0.0 to 1.0 that this matches the student roster correctly."
-            }
-          },
-          required: ["studentName", "score", "feedback"],
-        },
-      },
+    const parsedResponse = await gradeSubmissionWithGemini({
+      parts: [part],
+      label: fileName || "作業",
+      roster: roster || [],
+      assessmentName: assessmentName || "作業",
+      rubric,
     });
-
-    const parsedResponse = JSON.parse(result.text || "{}");
     res.json(parsedResponse);
 
   } catch (e: any) {
@@ -892,23 +901,9 @@ app.post("/api/gmail/analyze-cached", async (req, res) => {
     const skippedNames: string[] = [];
     for (const att of atts) {
       const buf = await fs.readFile(path.join(GMAIL_FILES_DIR, att.localFile));
-      const mt = String(att.mimeType || "").toLowerCase();
-      const fnameLower = String(att.filename || "").toLowerCase();
-      if (mt.includes("wordprocessingml") || fnameLower.endsWith(".docx")) {
-        let text = "";
-        try {
-          text = (await mammoth.extractRawText({ buffer: buf })).value || "";
-        } catch {
-          text = "";
-        }
-        if (text.trim()) {
-          parts.push(`檔案「${att.filename}」(Word 擷取文字)：\n${text}`);
-          usedNames.push(att.filename);
-        } else {
-          skippedNames.push(att.filename);
-        }
-      } else if (mt.startsWith("image/") || mt === "application/pdf" || mt.startsWith("text/")) {
-        parts.push({ inlineData: { mimeType: att.mimeType, data: buf.toString("base64") } });
+      const part = await buildGradingPart(buf, att.mimeType, att.filename);
+      if (part) {
+        parts.push(part);
         usedNames.push(att.filename);
       } else {
         skippedNames.push(att.filename);
