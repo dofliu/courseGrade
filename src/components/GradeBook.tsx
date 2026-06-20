@@ -658,7 +658,7 @@ export default function GradeBook({
                 <FileSpreadsheet className="w-3.5 h-3.5 text-blue-600" />
                 Excel / CSV 上傳
               </div>
-              <label className="border-2 border-dashed border-slate-250 bg-slate-50 hover:border-blue-500 transition cursor-pointer p-4 h-[104px] flex flex-col items-center justify-center text-center rounded">
+              <label className="border-2 border-dashed border-slate-200 bg-slate-50 hover:border-blue-500 transition cursor-pointer p-4 h-[104px] flex flex-col items-center justify-center text-center rounded">
                 <FileUp className="w-7 h-7 text-slate-400 mb-1" />
                 <span className="text-[11px] font-bold text-slate-700">
                   {importFileName || "選擇檔案"}

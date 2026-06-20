@@ -276,7 +276,7 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => { e.preventDefault(); addFiles(e.dataTransfer.files); }}
-            className="border-2 border-dashed border-slate-250 bg-slate-50 p-5 text-center cursor-pointer hover:border-blue-500 hover:bg-slate-100 transition rounded"
+            className="border-2 border-dashed border-slate-200 bg-slate-50 p-5 text-center cursor-pointer hover:border-blue-500 hover:bg-slate-100 transition rounded"
           >
             <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
             <div className="text-xs font-bold text-slate-700">點擊或拖曳講義至此</div>
@@ -288,7 +288,7 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
           {files.length > 0 && (
             <div className="space-y-1.5">
               {files.map((f, i) => (
-                <div key={i} className="flex items-center justify-between bg-blue-50 border border-blue-150 px-2.5 py-1.5 rounded text-[11px]">
+                <div key={i} className="flex items-center justify-between bg-blue-50 border border-blue-200 px-2.5 py-1.5 rounded text-[11px]">
                   <span className="font-semibold text-blue-900 truncate max-w-[180px]" title={f.name}>📄 {f.name}</span>
                   <button onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))} className="text-slate-400 hover:text-red-500">
                     <X className="w-3.5 h-3.5" />
@@ -419,7 +419,7 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
                   </div>
                 </div>
               ))}
-              <button onClick={addQuestion} className="w-full py-2 border-2 border-dashed border-slate-250 rounded text-xs text-slate-500 hover:border-blue-400 hover:text-blue-600 transition flex items-center justify-center gap-1.5">
+              <button onClick={addQuestion} className="w-full py-2 border-2 border-dashed border-slate-200 rounded text-xs text-slate-500 hover:border-blue-400 hover:text-blue-600 transition flex items-center justify-center gap-1.5">
                 <Plus className="w-4 h-4" /> 新增題目
               </button>
             </div>
