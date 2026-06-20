@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, ChangeEvent } from "react";
 import { Course, Student, SimulatedUploadedFile } from "../types";
+import { matchStudentByFilename } from "../lib/matching";
 import { FolderOpen, Play, Check, AlertTriangle, FileText, UserPlus, Save, Edit3, ArrowRight, Loader } from "lucide-react";
 
 interface FolderAnalyzerProps {
@@ -104,17 +105,9 @@ export default function FolderAnalyzer({
     setFileQueue(newFiles);
   };
 
-  // 從檔名找對應學生（學號優先，其次姓名）— 批次前用來判斷是否已評分
-  const matchStudentByFilename = (filename: string): Student | null => {
-    if (!selectedCourse) return null;
-    const norm = filename.toLowerCase().replace(/[\s\-_.()／/]/g, "");
-    const byId = selectedCourse.students.find((s) => {
-      const id = s.studentId.toLowerCase().replace(/[\s\-_.()／/]/g, "");
-      return id.length >= 4 && norm.includes(id);
-    });
-    if (byId) return byId;
-    return selectedCourse.students.find((s) => s.name && s.name.length >= 2 && filename.includes(s.name)) || null;
-  };
+  // 從檔名找對應學生（共用邏輯見 lib/matching）— 批次前用來判斷是否已評分
+  const matchByFilename = (filename: string): Student | null =>
+    selectedCourse ? matchStudentByFilename(selectedCourse.students, filename) : null;
 
   // Trigger AI analysis sequentially (to avoid rate limits and keep logs clear)
   const startAIAnalysis = async () => {
@@ -140,7 +133,7 @@ export default function FolderAnalyzer({
 
       // 已評分就略過：用檔名比對名單，若該生在此項目已有分數則不再呼叫 AI
       if (skipGraded) {
-        const pre = matchStudentByFilename(file.name);
+        const pre = matchByFilename(file.name);
         if (pre && pre.grades[targetAsstId] != null) {
           updatedQueue[i] = {
             ...file,

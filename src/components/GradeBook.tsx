@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import * as XLSX from "xlsx";
 import { Course, Student, AssessmentItem } from "../types";
 import { studentTotal } from "../lib/grades";
+import { parseScoreText } from "../lib/parsing";
 import { Download, Save, Search, Filter, Edit3, Check, X, FileSpreadsheet, MessageSquare, ChevronDown, ChevronUp, Upload, FileUp } from "lucide-react";
 
 interface GradeBookProps {
@@ -233,40 +234,9 @@ export default function GradeBook({
   const findStudentForRow = (row: { studentId: string }) =>
     students.find((s) => s.studentId === row.studentId || s.name === row.studentId) || null;
 
-  // 解析一行文字：「學號 分數 [評語]」，分隔符容許 tab / 逗號 / 空白
-  const parseScoreLine = (line: string): { studentId: string; score: number | null; feedback: string } | null => {
-    const text = line.trim();
-    if (!text) return null;
-    let parts: string[];
-    if (text.includes("\t")) parts = text.split("\t");
-    else if (text.includes(",")) parts = text.split(",");
-    else parts = text.split(/\s+/);
-    parts = parts.map((p) => p.trim()).filter(Boolean);
-    if (parts.length < 2) return null;
-
-    const studentId = parts[0];
-    // 第一個 0–100 的純數字當分數，其後文字併為評語
-    let score: number | null = null;
-    let scoreIdx = -1;
-    for (let i = 1; i < parts.length; i++) {
-      if (/^\d+(\.\d+)?$/.test(parts[i])) {
-        const n = Number(parts[i]);
-        if (n >= 0 && n <= 100) {
-          score = n;
-          scoreIdx = i;
-          break;
-        }
-      }
-    }
-    const feedback = scoreIdx >= 0 ? parts.slice(scoreIdx + 1).join(" ") : "";
-    return { studentId, score, feedback };
-  };
-
+  // 解析貼上的成績文字（共用邏輯見 lib/parsing）
   const handleParseText = () => {
-    const rows = importText
-      .split("\n")
-      .map(parseScoreLine)
-      .filter(Boolean) as { studentId: string; score: number | null; feedback: string }[];
+    const rows = parseScoreText(importText);
     if (rows.length === 0) {
       alert("無法解析任何資料，請確認格式為「學號 分數 [評語]」。");
       return;

@@ -5,6 +5,7 @@ import crypto from "crypto";
 import mammoth from "mammoth";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { matchStudentFromSignals } from "./src/lib/matching";
 
 // 優先讀 .env.local（放本機機密，與 Vite 前端共用同一檔），再以 .env 補沒設到的值。
 // dotenv 預設不覆寫已存在的變數，所以先載入的 .env.local 具有較高優先序。
@@ -330,39 +331,7 @@ Return your response in clean JSON matching the target schema.`;
   return JSON.parse(result.text || "{}");
 }
 
-// 正規化字串以利比對：轉小寫、去掉空白與常見分隔符號
-function normalizeForMatch(s: string) {
-  return String(s || "").toLowerCase().replace(/[\s\-_.()／/]/g, "");
-}
-
-// 從多個訊號（主旨、寄件者名、內文、附件檔名、信箱）找出對應的修課學生。
-// 優先序：信箱完全相符 → 學號出現 → 完整姓名出現。學生常漏寫資訊，故多訊號交叉比對。
-function matchStudentFromSignals(
-  roster: any[],
-  opts: { subject: string; senderName: string; fromEmail: string; bodyExcerpt: string; filenames: string[] }
-): { student: any | null; by: "email" | "studentId" | "name" | null } {
-  if (!Array.isArray(roster) || roster.length === 0) return { student: null, by: null };
-
-  // 1) 寄件信箱完全相符（最高信心）
-  const byEmail = roster.find((s) => s.email && s.email.toLowerCase() === opts.fromEmail.toLowerCase());
-  if (byEmail) return { student: byEmail, by: "email" };
-
-  const rawHay = [opts.subject, opts.senderName, opts.bodyExcerpt, ...(opts.filenames || [])].join("  ");
-  const normHay = normalizeForMatch(rawHay);
-
-  // 2) 學號出現在主旨／寄件者名／內文／附件檔名（學號最具辨識度）
-  const byId = roster.find((s) => {
-    const id = normalizeForMatch(s.studentId);
-    return id.length >= 4 && normHay.includes(id);
-  });
-  if (byId) return { student: byId, by: "studentId" };
-
-  // 3) 完整姓名（≥2 字）出現於任一訊號
-  const byName = roster.find((s) => s.name && String(s.name).length >= 2 && rawHay.includes(s.name));
-  if (byName) return { student: byName, by: "name" };
-
-  return { student: null, by: null };
-}
+// 多訊號學籍配對改用共用模組 src/lib/matching（與前端同一份邏輯、有單元測試）
 
 // 列出並解析 Gmail 信件（不下載附件）— 給 pull 端點使用
 async function listAndParseGmailMessages(accessToken: string, query: string, labelIds: any, roster: any) {
