@@ -13,6 +13,9 @@ db.json.tmp
 db.manual-backup-*.json
 backups/
 
+# 本機設定（Gemini API key / 模型選擇，含機密，不應進 git）
+edugrade-config.json
+
 # Gmail 離線暫存（信件 manifest + 下載的附件檔，含個資，不應進 git）
 gmail_cache/
 

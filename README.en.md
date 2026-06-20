@@ -12,7 +12,7 @@ An AI-assisted grading system for university courses, integrating Google Gemini 
 
 - **Frontend**: React 19 + TypeScript + Vite + Tailwind CSS 4
 - **Backend**: Express (single `server.ts` serving the REST API with Vite middleware)
-- **AI**: Google Gemini API (`gemini-3.5-flash`)
+- **AI**: Google Gemini API (default `gemini-3.5-flash`, switchable in-app, e.g. `gemini-3.1-flash-lite` to cut cost)
 - **Auth**: Google Identity Services (OAuth, scoped to `gmail.readonly` + `userinfo.email`)
 - **Document parsing**: `mammoth` (Word .docx → text), `xlsx` (roster/grade import), built-in .ipynb extraction
 - **Document output**: `docx` (export exams as Word student/answer sheets)
@@ -37,6 +37,8 @@ Copy `.env.example` to `.env.local` and fill in:
 | `VITE_GOOGLE_CLIENT_ID` | Gmail sign-in (public value) | Google Cloud Console (see below) |
 
 > `server.ts` reads both `.env.local` and `.env`; `GEMINI_API_KEY` can also be a system environment variable.
+
+> **Or set it in-app**: the "Course & weight management" tab has an "AI key settings" card to enter `GEMINI_API_KEY` and **switch models** (default 3.5 Flash; pick 3.1 Flash-Lite, etc., or a custom id), saved to a local `edugrade-config.json` and applied immediately. Precedence: API key is **env-first**; model is **app-setting-first** (so a system `GEMINI_MODEL` won't lock it).
 
 ### 3. Start
 ```bash
@@ -108,6 +110,9 @@ Once every assessment is graded and weights sum to 100%, this value is the final
 |----------|---------|
 | `GET/POST /api/db` | Read/save courses & grades (`db.json`) |
 | `GET /api/version` | Version + server start time (shown in the footer) |
+| `GET /api/settings` | Key status, current model, and model options |
+| `POST /api/settings/gemini-key` | Set the API key in-app (writes local config, applies immediately) |
+| `POST /api/settings/gemini-model` | Switch model in-app (app setting wins over the env var) |
 | `POST /api/analyze-file` | AI grade a single file (folder batch; rubric supported) |
 | `POST /api/exam/generate` | AI exam generation from lecture files / topic scope |
 | `POST /api/gmail/labels` | List Gmail labels (folders) |

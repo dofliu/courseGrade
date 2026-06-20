@@ -83,6 +83,7 @@
 
 ### ✅ 後續波（已完成）
 - [x] **桌面版設定 UI**：app 內填 `GEMINI_API_KEY`（env 優先、其次本機 config.json、即時生效），課程設定頁 ApiKeySettings 卡
+- [x] **AI 模型可切換**：3.5 Flash／3 Flash／3.1 Flash-Lite／3.1 Pro 或自訂 id，**app 設定優先於環境變數**（不被系統 GEMINI_MODEL 鎖死）
 - [x] **出題增強**：難度分布控制（各難度題數）＋自動平衡總分（balancePointsTo，餘數精準修正）
 
 ### 後續可做
