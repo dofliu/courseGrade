@@ -1,7 +1,9 @@
 import { useState, useRef } from "react";
+import { Packer } from "docx";
 import { Course, ExamPaper, ExamQuestion, ExamQuestionType, ExamDifficulty } from "../types";
+import { buildExamDocument } from "../lib/examDocx";
 import {
-  FileText, Sparkles, Upload, X, Trash2, Plus, Printer, Save, Loader, FolderOpen,
+  FileText, Sparkles, Upload, X, Trash2, Plus, Printer, Save, Loader, FolderOpen, FileDown,
 } from "lucide-react";
 
 interface ExamGeneratorProps {
@@ -206,6 +208,23 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
     }
   };
 
+  // 匯出 Word .docx（可在 Word 直接編輯）
+  const exportDocx = async (qs: ExamQuestion[], examTitle: string, withAnswer: boolean) => {
+    if (qs.length === 0) {
+      alert("沒有題目可匯出。");
+      return;
+    }
+    const doc = buildExamDocument({ title: examTitle, courseName: course?.name || "", questions: qs, withAnswer });
+    const blob = await Packer.toBlob(doc);
+    const safe = (examTitle || "考卷").replace(/[\\/:*?"<>|]/g, "_");
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safe}${withAnswer ? "_答案卷" : "_學生卷"}.docx`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
   const coursePapers = examPapers.filter((p) => !course || p.courseId === course.id);
 
   return (
@@ -327,8 +346,12 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
                 <div className="text-[10px] text-slate-400 mt-0.5">{p.questions.length} 題</div>
                 <div className="flex gap-1.5 mt-1.5">
                   <button onClick={() => loadPaper(p)} className="text-[10px] px-2 py-1 bg-slate-100 rounded hover:bg-slate-200 font-semibold">載入編輯</button>
-                  <button onClick={() => printExam(p.questions, p.title, false)} className="text-[10px] px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 font-semibold">學生卷</button>
-                  <button onClick={() => printExam(p.questions, p.title, true)} className="text-[10px] px-2 py-1 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 font-semibold">答案卷</button>
+                  <button onClick={() => printExam(p.questions, p.title, false)} className="text-[10px] px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 font-semibold">列印學生卷</button>
+                  <button onClick={() => printExam(p.questions, p.title, true)} className="text-[10px] px-2 py-1 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 font-semibold">列印答案卷</button>
+                </div>
+                <div className="flex gap-1.5 mt-1">
+                  <button onClick={() => exportDocx(p.questions, p.title, false)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded hover:bg-indigo-100 font-semibold flex items-center gap-1"><FileDown className="w-3 h-3" /> Word學生卷</button>
+                  <button onClick={() => exportDocx(p.questions, p.title, true)} className="text-[10px] px-2 py-1 bg-indigo-50 text-indigo-700 rounded hover:bg-indigo-100 font-semibold flex items-center gap-1"><FileDown className="w-3 h-3" /> Word答案卷</button>
                 </div>
               </div>
             ))}
@@ -355,10 +378,16 @@ export default function ExamGenerator({ courses, selectedCourseId, examPapers, o
                   <Save className="w-3.5 h-3.5" /> 儲存
                 </button>
                 <button onClick={() => printExam(questions, title || "考卷", false)} className="px-3 py-1.5 text-xs bg-blue-600 text-white rounded font-semibold hover:bg-blue-700 flex items-center gap-1.5">
-                  <Printer className="w-3.5 h-3.5" /> 學生卷
+                  <Printer className="w-3.5 h-3.5" /> 列印學生卷
                 </button>
                 <button onClick={() => printExam(questions, title || "考卷", true)} className="px-3 py-1.5 text-xs bg-emerald-600 text-white rounded font-semibold hover:bg-emerald-700 flex items-center gap-1.5">
-                  <Printer className="w-3.5 h-3.5" /> 答案卷
+                  <Printer className="w-3.5 h-3.5" /> 列印答案卷
+                </button>
+                <button onClick={() => exportDocx(questions, title || "考卷", false)} className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded font-semibold hover:bg-indigo-700 flex items-center gap-1.5">
+                  <FileDown className="w-3.5 h-3.5" /> Word學生卷
+                </button>
+                <button onClick={() => exportDocx(questions, title || "考卷", true)} className="px-3 py-1.5 text-xs bg-indigo-600 text-white rounded font-semibold hover:bg-indigo-700 flex items-center gap-1.5">
+                  <FileDown className="w-3.5 h-3.5" /> Word答案卷
                 </button>
               </div>
             )}
