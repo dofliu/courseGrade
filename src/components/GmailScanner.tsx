@@ -290,7 +290,12 @@ export default function GmailScanner({
     if (!msg || msg.attachments.length === 0) return;
 
     const currentAsst = selectedCourse?.assessments.find(a => a.id === targetAsstId);
-    const attachment = msg.attachments[0]; // analyze first attachment for simplicity
+    const attachment = msg.attachments[0];
+    // 後端會把這封信的所有附件一起評（多頁掃描＝同一份），log 用整體描述
+    const attachLabel =
+      msg.attachments.length > 1
+        ? `${attachment.filename} 等 ${msg.attachments.length} 個附件`
+        : attachment.filename;
 
     // 以最新的 messagesRef 為基準套用單封更新（同步更新 ref + state），批次中不互相覆蓋
     const applyUpdate = (patch: Partial<GmailMessageResult>): GmailMessageResult[] => {
@@ -303,7 +308,7 @@ export default function GmailScanner({
     applyUpdate({ status: "running" });
 
     try {
-      setScanLogs((prev) => [...prev, `⏳ 正在用本機附件「${attachment.filename}」進行 AI 評分...`]);
+      setScanLogs((prev) => [...prev, `⏳ 正在用本機附件「${attachLabel}」進行 AI 評分...`]);
 
       // 用本機已下載的附件評分，完全不需要 Google token
       const response = await fetch("/api/gmail/analyze-cached", {
@@ -329,7 +334,7 @@ export default function GmailScanner({
       // 不支援的格式（如 .xlsx）— 標記略過，不算失敗、批次不會再重試
       if (result.unsupported) {
         const next = applyUpdate({ status: "unsupported", unsupported: true });
-        setScanLogs((prev) => [...prev, `⏭ 略過「${attachment.filename}」：${result.error || "格式無法 AI 評分"}`]);
+        setScanLogs((prev) => [...prev, `⏭ 略過「${attachLabel}」：${result.error || "格式無法 AI 評分"}`]);
         saveCache(next);
         return;
       }
@@ -361,14 +366,14 @@ export default function GmailScanner({
       const next = applyUpdate(patch);
       setScanLogs((prev) => [
         ...prev,
-        `✓ AI 完成評分 ➔ "${attachment.filename}" 得分: ${result.score} 分`
+        `✓ AI 完成評分 ➔ "${attachLabel}" 得分: ${result.score} 分`
       ]);
       saveCache(next);
 
     } catch (e: any) {
       console.error(e);
       const next = applyUpdate({ status: "failed" });
-      setScanLogs((prev) => [...prev, `❌ 附件辨識出錯：「${attachment.filename}」- ${e.message}`]);
+      setScanLogs((prev) => [...prev, `❌ 附件辨識出錯：「${attachLabel}」- ${e.message}`]);
       saveCache(next);
     }
   };

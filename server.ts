@@ -13,7 +13,7 @@ dotenv.config({ path: ".env.local" });
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Set up JSON body size limit to support base64 school documents
 app.use(express.json({ limit: "30mb" }));
@@ -268,22 +268,22 @@ async function writeGmailCache(courseId: string, assessmentId: string, data: any
   await fs.writeFile(gmailCachePath(courseId, assessmentId), JSON.stringify(data, null, 2), "utf-8");
 }
 
-// 共用的 Gemini 評分流程。可吃「檔案 base64（圖片/PDF）」或「擷取出來的純文字（.docx）」。
+// 共用的 Gemini 評分流程。吃「已組好的 content 片段陣列」（字串或 {inlineData}），
+// 可一次餵入一封信的多個附件（多頁掃描）一起評。
 async function gradeSubmissionWithGemini(opts: {
-  base64?: string;
-  mimeType?: string;
-  textContent?: string;
-  filename: string;
+  parts: any[];   // 字串（文字）或 {inlineData:{mimeType,data}}（圖片/PDF）
+  label: string;  // 描述用（檔名清單）
   roster: any;
   assessmentName: string;
   rubric?: string;
 }) {
-  const { filename, roster, assessmentName, rubric } = opts;
+  const { parts, label, roster, assessmentName, rubric } = opts;
   const ai = getGeminiAI();
 
   const systemPrompt = `You are an elite, highly precise university assistant built to grade assignments.
 You write exclusively in Traditional Chinese (繁體中文).
-You are evaluating the submitted file "${filename}" for the assessment "${assessmentName}".
+You are evaluating the submission "${label}" for the assessment "${assessmentName}".
+If multiple files/pages are provided, treat them together as ONE student's single submission.
 ${rubric ? `\nThe instructor has provided the following grading rubric / criteria. You MUST grade strictly according to it (scoring weights, key points, and deduction rules):\n"""\n${rubric}\n"""\n` : ""}
 Your goal:
 1. Examine this custom assignment workspace submission.
@@ -294,14 +294,10 @@ Your goal:
 
 Return your response in clean JSON matching the target schema.`;
 
-  // 依輸入型態組 contents：文字檔走文字 part，圖片/PDF 走 inlineData
-  const contents: any[] = [];
-  if (opts.textContent) {
-    contents.push(`以下是學生繳交檔案「${filename}」由 Word(.docx) 擷取出的文字內容，請據此評分：\n\n${opts.textContent}`);
-  } else {
-    contents.push({ inlineData: { mimeType: opts.mimeType || "image/jpeg", data: opts.base64 || "" } });
-  }
-  contents.push(`Grading student submission file "${filename}". Verify details, evaluate quality, and generate feedback.`);
+  const contents: any[] = [
+    ...parts,
+    `Grading student submission "${label}" (may span multiple files/pages). Verify details, evaluate quality, and generate feedback.`,
+  ];
 
   const result = await ai.models.generateContent({
     model: "gemini-3.5-flash",
@@ -879,41 +875,57 @@ app.post("/api/gmail/analyze-cached", async (req, res) => {
     const msg = (cache.messages || []).find((m: any) => m.messageId === messageId);
     if (!msg) return res.status(404).json({ error: "暫存中找不到該封信件。" });
 
-    const att = (msg.attachments || []).find((a: any) => a.localFile);
-    if (!att) return res.status(400).json({ error: "此信件沒有已下載的本機附件可分析。" });
-
-    const buf = await fs.readFile(path.join(GMAIL_FILES_DIR, att.localFile));
-    const mt = String(att.mimeType || "").toLowerCase();
-    const fnameLower = String(att.filename || "").toLowerCase();
+    const atts = (msg.attachments || []).filter((a: any) => a.localFile);
+    if (atts.length === 0) return res.status(400).json({ error: "此信件沒有已下載的本機附件可分析。" });
 
     // 標記為不支援、回寫 manifest、回傳友善訊息（前端會略過、不重試）
     const markUnsupported = async (reason: string) => {
       msg.status = "unsupported";
       msg.unsupported = true;
       await writeGmailCache(courseId, assessmentId, cache);
-      return res.json({ success: false, unsupported: true, filename: att.filename, error: reason });
+      return res.json({ success: false, unsupported: true, filename: atts[0].filename, error: reason });
     };
 
-    let parsed: any;
-    if (mt.includes("wordprocessingml") || fnameLower.endsWith(".docx")) {
-      // Word .docx → 擷取純文字後送 Gemini（Gemini 不吃 .docx 原檔）
-      let text = "";
-      try {
-        const r = await mammoth.extractRawText({ buffer: buf });
-        text = r.value || "";
-      } catch {
-        return await markUnsupported("此 .docx 無法解析（檔案可能損壞），請改交 PDF 或手動評分。");
+    // 一封信的所有附件一起評（多頁掃描＝同一份繳交）。個別不支援的格式略過、不中斷。
+    const parts: any[] = [];
+    const usedNames: string[] = [];
+    const skippedNames: string[] = [];
+    for (const att of atts) {
+      const buf = await fs.readFile(path.join(GMAIL_FILES_DIR, att.localFile));
+      const mt = String(att.mimeType || "").toLowerCase();
+      const fnameLower = String(att.filename || "").toLowerCase();
+      if (mt.includes("wordprocessingml") || fnameLower.endsWith(".docx")) {
+        let text = "";
+        try {
+          text = (await mammoth.extractRawText({ buffer: buf })).value || "";
+        } catch {
+          text = "";
+        }
+        if (text.trim()) {
+          parts.push(`檔案「${att.filename}」(Word 擷取文字)：\n${text}`);
+          usedNames.push(att.filename);
+        } else {
+          skippedNames.push(att.filename);
+        }
+      } else if (mt.startsWith("image/") || mt === "application/pdf" || mt.startsWith("text/")) {
+        parts.push({ inlineData: { mimeType: att.mimeType, data: buf.toString("base64") } });
+        usedNames.push(att.filename);
+      } else {
+        skippedNames.push(att.filename);
       }
-      if (!text.trim()) {
-        return await markUnsupported("此 .docx 擷取不到文字內容（可能是純圖片），請改交 PDF 或手動評分。");
-      }
-      parsed = await gradeSubmissionWithGemini({ textContent: text, filename: att.filename, roster: roster || [], assessmentName: assessmentName || "作業", rubric });
-    } else if (mt.startsWith("image/") || mt === "application/pdf" || mt.startsWith("text/")) {
-      const base64 = buf.toString("base64");
-      parsed = await gradeSubmissionWithGemini({ base64, mimeType: att.mimeType, filename: att.filename, roster: roster || [], assessmentName: assessmentName || "作業", rubric });
-    } else {
-      return await markUnsupported(`格式（${att.mimeType || att.filename}）無法由 AI 直接評分，請轉成 PDF 或手動輸入分數。`);
     }
+
+    if (parts.length === 0) {
+      return await markUnsupported(`附件格式皆無法由 AI 直接評分（${skippedNames.join("、")}），請轉成 PDF 或手動輸入分數。`);
+    }
+
+    const parsed: any = await gradeSubmissionWithGemini({
+      parts,
+      label: usedNames.join("、"),
+      roster: roster || [],
+      assessmentName: assessmentName || "作業",
+      rubric,
+    });
 
     // 回寫 manifest，讓 AI 結果持久化（下次開啟仍在）
     msg.analysis = {
@@ -927,7 +939,7 @@ app.post("/api/gmail/analyze-cached", async (req, res) => {
     msg.status = "completed";
     await writeGmailCache(courseId, assessmentId, cache);
 
-    res.json({ success: true, filename: att.filename, ...parsed });
+    res.json({ success: true, filename: usedNames.join("、"), filesUsed: usedNames.length, filesSkipped: skippedNames, ...parsed });
   } catch (e: any) {
     console.error("Gmail cached analyze error:", e);
     res.status(500).json({ error: "本機附件 AI 評分失敗: " + e.message });
