@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Course, Student, AssessmentItem } from "../types";
-import { accumulatedWeighted } from "../lib/grades";
+import { studentTotal } from "../lib/grades";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { Award, CheckCircle, HelpCircle, Users, BarChart3, Mail, Copy, Check, FileDown, BookOpen, AlertCircle } from "lucide-react";
 
@@ -34,8 +34,8 @@ export default function GradingDashboard({
   const assessments = currentCourse.assessments;
   const activeAssessment = assessments.find((a) => a.id === targetAsstId) || assessments[0];
 
-  // 1. 目前累計加權分（共用邏輯見 lib/grades）
-  const calculateWeightedGrade = (student: Student) => accumulatedWeighted(student.grades, assessments);
+  // 1. 目前累計加權分（含個人加減分；共用邏輯見 lib/grades）
+  const calculateWeightedGrade = (student: Student) => studentTotal(student.grades, assessments, student.adjustment);
 
   const studentWithFinals = students.map((s) => ({
     ...s,

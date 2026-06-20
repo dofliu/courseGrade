@@ -1,5 +1,5 @@
 import { Course, Student } from "../types";
-import { accumulatedWeighted, hasAnyGrade, findFinalAssessment, neededOnFinal as calcNeededOnFinal } from "../lib/grades";
+import { studentTotal, hasAnyGrade, findFinalAssessment, neededOnFinal as calcNeededOnFinal } from "../lib/grades";
 import { ClipboardList, CheckCircle2, Clock, XCircle, Lock } from "lucide-react";
 
 interface SubmissionOverviewProps {
@@ -35,15 +35,17 @@ export default function SubmissionOverview({
     return "missing";
   };
 
-  // 目前累計加權分（共用邏輯見 lib/grades；無任何分數則回 null 以顯示「—」）
+  // 目前累計加權分（含個人加減分；無任何分數且無加減分則回 null 以顯示「—」）
   const calcWeighted = (s: Student): number | null =>
-    hasAnyGrade(s.grades, assessments) ? accumulatedWeighted(s.grades, assessments) : null;
+    hasAnyGrade(s.grades, assessments) || s.adjustment
+      ? studentTotal(s.grades, assessments, s.adjustment)
+      : null;
 
   const PASS_MARK = 60;
   const finalAsst = findFinalAssessment(assessments);
 
-  // 期末考要考幾分才能讓「累計加權分」達及格門檻（共用邏輯見 lib/grades）
-  const neededOnFinal = (s: Student) => calcNeededOnFinal(s.grades, assessments, finalAsst, PASS_MARK);
+  // 期末考要考幾分才能讓「累計加權分」達及格門檻（含個人加減分；共用邏輯見 lib/grades）
+  const neededOnFinal = (s: Student) => calcNeededOnFinal(s.grades, assessments, finalAsst, PASS_MARK, s.adjustment);
 
   // 每個項目（欄）的繳交統計
   const columnStats = assessments.map((a) => {

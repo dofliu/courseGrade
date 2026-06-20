@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import * as XLSX from "xlsx";
 import { Course, Student, AssessmentItem } from "../types";
-import { accumulatedWeighted } from "../lib/grades";
+import { studentTotal } from "../lib/grades";
 import { Download, Save, Search, Filter, Edit3, Check, X, FileSpreadsheet, MessageSquare, ChevronDown, ChevronUp, Upload, FileUp } from "lucide-react";
 
 interface GradeBookProps {
@@ -35,6 +35,12 @@ export default function GradeBook({
   const [importFileName, setImportFileName] = useState("");
   const [importRows, setImportRows] = useState<{ studentId: string; score: number | null; feedback: string }[]>([]);
 
+  // 整欄填同分（如全班平時/出席 80 分）
+  const [showBulkFill, setShowBulkFill] = useState(false);
+  const [bulkAsstId, setBulkAsstId] = useState("");
+  const [bulkScore, setBulkScore] = useState("");
+  const [bulkOnlyEmpty, setBulkOnlyEmpty] = useState(true);
+
   if (!currentCourse) {
     return (
       <div className="bg-white p-12 text-center rounded-2xl border border-gray-100 text-slate-400">
@@ -45,8 +51,8 @@ export default function GradeBook({
 
   const { students, assessments } = currentCourse;
 
-  // 目前累計加權分（共用邏輯見 lib/grades）
-  const calculateWeightedGrade = (student: Student) => accumulatedWeighted(student.grades, assessments);
+  // 目前累計加權分（含個人加減分；共用邏輯見 lib/grades）
+  const calculateWeightedGrade = (student: Student) => studentTotal(student.grades, assessments, student.adjustment);
 
   // Perform filtering
   const filteredStudents = students.filter((s) => {
@@ -111,6 +117,17 @@ export default function GradeBook({
     onUpdateCourses(updatedCourses);
   };
 
+  // 個人額外加減分（看平時表現），直接加到累計加權分
+  const handleSaveAdjustment = (studentId: string, value: number, note?: string) => {
+    const updatedStudents = students.map((stud) =>
+      stud.id === studentId
+        ? { ...stud, adjustment: value, adjustmentNote: note != null ? note : stud.adjustmentNote }
+        : stud
+    );
+    const updatedCourse = { ...currentCourse, students: updatedStudents };
+    onUpdateCourses(courses.map((c) => (c.id === currentCourse.id ? updatedCourse : c)));
+  };
+
   // CSV Batch Export function
   const handleExportCSV = () => {
     if (students.length === 0) {
@@ -123,6 +140,7 @@ export default function GradeBook({
     assessments.forEach((a) => {
       headers.push(`${a.name}(佔${a.weight}%)`);
     });
+    headers.push("額外加減分");
     headers.push("目前累計加權分");
     
     // Add columns for feedback
@@ -147,7 +165,8 @@ export default function GradeBook({
         row.push(score != null ? score.toString() : "-");
       });
 
-      // Add overall grade
+      // Add adjustment + overall grade
+      row.push((student.adjustment ?? 0).toString());
       row.push(calculateWeightedGrade(student).toString());
 
       // Add feedbacks (escape CSV commas)
@@ -175,6 +194,40 @@ export default function GradeBook({
   if (!importAsstId && assessments.length > 0) {
     setImportAsstId(assessments[0].id);
   }
+  if (!bulkAsstId && assessments.length > 0) {
+    setBulkAsstId(assessments[0].id);
+  }
+
+  // 整欄填同分：把同一個分數填給全班（或只填未評分者），並標記已繳
+  const handleBulkFill = () => {
+    if (!bulkAsstId) {
+      alert("請先選擇評分項目。");
+      return;
+    }
+    const v = parseFloat(bulkScore);
+    if (isNaN(v) || v < 0 || v > 100) {
+      alert("請輸入 0–100 的有效分數。");
+      return;
+    }
+    let count = 0;
+    const updatedStudents = students.map((s) => {
+      if (bulkOnlyEmpty && s.grades[bulkAsstId] != null) return s; // 只填未評分者 → 跳過已評
+      count++;
+      return {
+        ...s,
+        grades: { ...s.grades, [bulkAsstId]: v },
+        submitStatus: { ...s.submitStatus, [bulkAsstId]: "submitted" as const },
+      };
+    });
+    if (count === 0) {
+      alert("沒有可填入的學生（可能全部已評分，且已勾選「只填未評分者」）。");
+      return;
+    }
+    onUpdateCourses(courses.map((c) => (c.id === currentCourse.id ? { ...currentCourse, students: updatedStudents } : c)));
+    alert(`已將「${assessments.find((a) => a.id === bulkAsstId)?.name}」填入 ${v} 分給 ${count} 位學生。`);
+    setShowBulkFill(false);
+    setBulkScore("");
+  };
 
   // 找出某列資料對應的學生（學號優先，找不到再比對姓名）
   const findStudentForRow = (row: { studentId: string }) =>
@@ -352,6 +405,16 @@ export default function GradeBook({
           </div>
 
           <button
+            onClick={() => setShowBulkFill((v) => !v)}
+            className={`px-4 py-2 rounded text-xs font-semibold shadow-sm transition flex items-center gap-1.5 ${
+              showBulkFill ? "bg-amber-600 text-white" : "bg-amber-500 text-white hover:bg-amber-600"
+            }`}
+          >
+            <Edit3 className="w-3.5 h-3.5" />
+            整欄填同分
+          </button>
+
+          <button
             onClick={() => setShowImport((v) => !v)}
             className={`px-4 py-2 rounded text-xs font-semibold shadow-sm transition flex items-center gap-1.5 ${
               showImport ? "bg-blue-700 text-white" : "bg-blue-600 text-white hover:bg-blue-700"
@@ -370,6 +433,64 @@ export default function GradeBook({
           </button>
         </div>
       </div>
+
+      {/* 整欄填同分面板 */}
+      {showBulkFill && (
+        <div className="border border-amber-200 bg-amber-50/50 rounded p-5 space-y-3">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h4 className="font-display font-semibold text-slate-900 text-sm flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-amber-600" />
+                整欄填入同一分數
+              </h4>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                一次把同一個分數填給全班某個評分項目（例如全班平時／出席 80 分），並標記為已繳。
+              </p>
+            </div>
+            <button onClick={() => setShowBulkFill(false)} className="text-slate-400 hover:text-slate-600 p-1">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">評分項目</label>
+              <select
+                value={bulkAsstId}
+                onChange={(e) => setBulkAsstId(e.target.value)}
+                className="text-xs px-3 py-2 border border-slate-200 rounded outline-none bg-white focus:border-amber-400 font-semibold text-slate-700"
+              >
+                {assessments.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}（佔 {a.weight}%）</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[11px] font-semibold text-slate-600 mb-1">分數</label>
+              <input
+                type="number"
+                min="0"
+                max="100"
+                value={bulkScore}
+                onChange={(e) => setBulkScore(e.target.value)}
+                placeholder="80"
+                className="w-24 text-sm font-bold text-center px-3 py-2 border border-slate-200 rounded outline-none focus:border-amber-400 text-amber-700"
+              />
+            </div>
+            <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer pb-2">
+              <input type="checkbox" checked={bulkOnlyEmpty} onChange={(e) => setBulkOnlyEmpty(e.target.checked)} className="w-4 h-4 accent-amber-600 cursor-pointer" />
+              只填「未評分」者（不覆蓋已有分數）
+            </label>
+            <button
+              onClick={handleBulkFill}
+              className="px-4 py-2 text-xs bg-amber-600 text-white rounded font-semibold hover:bg-amber-700 transition flex items-center gap-1.5"
+            >
+              <Check className="w-3.5 h-3.5" />
+              套用到全班
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 成績匯入面板 */}
       {showImport && (
@@ -636,6 +757,27 @@ export default function GradeBook({
                             <div className="text-xs font-semibold text-slate-700 flex items-center justify-between pb-1 border-b border-slate-200">
                               <span>📚 學員個別作業 AI 與助教評語備忘 (Roster Remarks Record) - {student.name}</span>
                               <span className="text-[10px] text-slate-400 font-mono">信箱: {student.email}</span>
+                            </div>
+
+                            {/* 個人額外加減分（看平時表現），直接加到累計加權分 */}
+                            <div className="flex flex-wrap items-center gap-2 bg-amber-50/60 border border-amber-200 rounded p-2.5">
+                              <span className="text-[11px] font-semibold text-amber-800">個人額外加減分</span>
+                              <input
+                                type="number"
+                                step="0.5"
+                                value={student.adjustment ?? 0}
+                                onChange={(e) => handleSaveAdjustment(student.id, Number(e.target.value) || 0)}
+                                className="w-16 text-sm font-bold text-center bg-white border border-amber-300 rounded py-0.5 outline-none text-amber-700"
+                                title="正數加分、負數扣分，會直接加到累計加權分"
+                              />
+                              <span className="text-[10px] text-slate-400">分</span>
+                              <input
+                                type="text"
+                                value={student.adjustmentNote || ""}
+                                onChange={(e) => handleSaveAdjustment(student.id, student.adjustment ?? 0, e.target.value)}
+                                placeholder="原因備註（如：出席積極 +2 / 遲交 -1）"
+                                className="flex-1 min-w-[140px] text-[11px] px-2 py-1 bg-white border border-slate-200 rounded outline-none focus:border-amber-400 text-slate-600"
+                              />
                             </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">

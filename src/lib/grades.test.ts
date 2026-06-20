@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { accumulatedWeighted, hasAnyGrade, findFinalAssessment, neededOnFinal } from "./grades";
+import { accumulatedWeighted, studentTotal, hasAnyGrade, findFinalAssessment, neededOnFinal } from "./grades";
 import { AssessmentItem } from "../types";
 
 // 仿 靜力學 配分
@@ -26,6 +26,21 @@ describe("accumulatedWeighted", () => {
   it("含加分可超過 100", () => {
     const full = { hw1: 100, midterm: 100, final: 100, bonus: 100, hw2: 100, quiz: 100, usual: 100 };
     expect(accumulatedWeighted(full, assessments)).toBe(115);
+  });
+});
+
+describe("studentTotal（含個人加減分）", () => {
+  it("無加減分 = 累計加權分", () => {
+    expect(studentTotal(zhuang, assessments, 0)).toBe(31);
+  });
+  it("加 5 分 → 36", () => {
+    expect(studentTotal(zhuang, assessments, 5)).toBe(36);
+  });
+  it("扣 3 分 → 28", () => {
+    expect(studentTotal(zhuang, assessments, -3)).toBe(28);
+  });
+  it("undefined 加減分視為 0", () => {
+    expect(studentTotal(zhuang, assessments)).toBe(31);
   });
 });
 
@@ -57,6 +72,10 @@ describe("neededOnFinal", () => {
   it("莊竣宇 期末需考 73 分（72.5 進位）", () => {
     const r = neededOnFinal(zhuang, assessments, final, 60);
     expect(r).toEqual({ kind: "need", need: 73 });
+  });
+  it("個人加 9 分後 banked=40，期末只需 50 分", () => {
+    const r = neededOnFinal(zhuang, assessments, final, 60, 9);
+    expect(r).toEqual({ kind: "need", need: 50 });
   });
   it("已銀行達標 → passed", () => {
     // 非期末項目全 100 → banked = 6+30+6+8+10 = 60 ≥ 60

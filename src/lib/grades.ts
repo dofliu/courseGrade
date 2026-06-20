@@ -7,17 +7,30 @@ import { Student, AssessmentItem } from "../types";
 
 type Grades = Student["grades"];
 
-/**
- * 目前累計加權分：各「已評分」項目的 分數×權重/100 加總。
- * 未評分／未繳項目以 0 計，不做正規化。學期末全部評完即為最終成績。
- */
-export function accumulatedWeighted(grades: Grades, assessments: AssessmentItem[]): number {
+// 內部：未四捨五入的加權加總（給對外函式共用，避免重複進位造成誤差）
+function rawWeighted(grades: Grades, assessments: AssessmentItem[]): number {
   let earned = 0;
   for (const a of assessments) {
     const score = grades[a.id];
     if (score != null) earned += (score * a.weight) / 100;
   }
-  return Math.round(earned * 10) / 10;
+  return earned;
+}
+
+/**
+ * 目前累計加權分：各「已評分」項目的 分數×權重/100 加總。
+ * 未評分／未繳項目以 0 計，不做正規化。學期末全部評完即為最終成績。
+ */
+export function accumulatedWeighted(grades: Grades, assessments: AssessmentItem[]): number {
+  return Math.round(rawWeighted(grades, assessments) * 10) / 10;
+}
+
+/**
+ * 學生總分 = 累計加權分 + 個人額外加減分（看平時表現，可為負）。
+ * 顯示用的「目前累計加權分」一律走這個函式，讓加減分反映到各畫面。
+ */
+export function studentTotal(grades: Grades, assessments: AssessmentItem[], adjustment = 0): number {
+  return Math.round((rawWeighted(grades, assessments) + (adjustment || 0)) * 10) / 10;
 }
 
 /** 是否至少有一個項目已評分（給「—」顯示判斷用）。 */
@@ -53,13 +66,14 @@ export function neededOnFinal(
   grades: Grades,
   assessments: AssessmentItem[],
   finalAsst: AssessmentItem | null,
-  passMark = 60
+  passMark = 60,
+  adjustment = 0
 ): NeededOnFinal {
   if (!finalAsst) return { kind: "nofinal" };
   if (grades[finalAsst.id] != null) return { kind: "done" };
 
-  // 排除期末考本身，把其他已評項目的加權分加總（已銀行的分數）
-  let banked = 0;
+  // 排除期末考本身，把其他已評項目的加權分加總（已銀行的分數），含個人加減分
+  let banked = adjustment || 0;
   for (const a of assessments) {
     if (a.id === finalAsst.id) continue;
     const score = grades[a.id];
