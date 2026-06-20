@@ -40,6 +40,15 @@ npm run dev      # http://localhost:3000
 npm test         # 執行單元測試（Vitest）
 ```
 
+### 一鍵啟動（免終端機）
+安裝過套件（`npm install`）後，日後可直接：
+- **雙擊 `Start-EduGrade.vbs`** → 背景啟動伺服器、就緒後自動開瀏覽器（不顯示終端機視窗）
+- 或 **雙擊 `EduGrade.bat`** → 同上但保留小視窗可看 log；關閉視窗即停止
+- **`Stop-EduGrade.bat`** → 停止伺服器（釋放 port 3000）
+- 指令版：`npm run launch`
+
+> 三者底層都是 `scripts/launch.mjs`：起動伺服器 → 等就緒 → 開 `http://localhost:3000`。
+
 > 只用「資料夾批次 / 成績簿 / 繳交總覽 / 儀表板」的話只需要 `GEMINI_API_KEY`；
 > Gmail 收件功能才需要 `VITE_GOOGLE_CLIENT_ID`。
 

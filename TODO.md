@@ -56,10 +56,15 @@
 - [x] 一封多附件：整封信的所有附件一起評（多頁掃描＝同一份），個別不支援格式略過不中斷
 - [x] server PORT 改為可由環境變數設定（為打包鋪路）
 
+### 一鍵啟動
+- [x] `scripts/launch.mjs` + `Start-EduGrade.vbs`（隱藏視窗雙擊啟動）/ `EduGrade.bat` / `Stop-EduGrade.bat`
+- [x] 起動伺服器→等就緒→自動開瀏覽器；`npm run launch`
+
 ## ⏳ 待辦 / 下一步
 
-- [ ] **打包成桌面 App / 一鍵啟動**：雙擊啟動、免終端機跑 npm run dev
+- [ ] 真正打包成單一桌面 App（Tauri/Electron）— 目前以啟動器達成「雙擊啟動、免終端機」
 - [ ] API 端點測試（cache 來回、analyze-cached guard）
+- [ ] 及格門檻課程層級可設定、評分標準範本庫
 - [ ] **及格門檻可設定**：目前固定 60，待做成課程層級可調
 - [ ] **評分標準範本庫**：常用 rubric 可儲存重用
 - [ ] **舊版 `.doc`／`.xlsx`**：目前略過，評估是否支援（.doc 需額外轉換）

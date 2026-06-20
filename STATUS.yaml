@@ -1,10 +1,10 @@
 name: EduGrade AI
 name_zh: 智慧評分助理
 category: edtech
-progress: 88
+progress: 92
 status: active
-last_updated: "2026-06-19"
-next_milestone: "抽出共用邏輯+單元測試、打包桌面 App、Gmail 多附件支援"
+last_updated: "2026-06-20"
+next_milestone: "真正打包桌面 App、API 端點測試、及格門檻可設定"
 technologies:
   - React
   - TypeScript
