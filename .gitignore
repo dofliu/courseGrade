@@ -15,3 +15,6 @@ backups/
 
 # Gmail 離線暫存（信件 manifest + 下載的附件檔，含個資，不應進 git）
 gmail_cache/
+
+# 出題 .docx 匯出樣本/測試輸出
+_sample_docx/
