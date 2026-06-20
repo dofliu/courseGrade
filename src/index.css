@@ -89,3 +89,10 @@
 .pulse-gradient {
   animation: pulse-subtle 4s infinite ease-in-out;
 }
+
+/* 課堂工具：抽籤卡牌 3D 翻面 */
+.eg-flip-card { perspective: 1000px; }
+.eg-flip-inner { transform-style: preserve-3d; transition: transform 0.7s ease-in-out; }
+.eg-flip-inner.is-flipped { transform: rotateY(180deg); }
+.eg-flip-face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
+.eg-flip-front { transform: rotateY(180deg); }
