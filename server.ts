@@ -6,6 +6,9 @@ import mammoth from "mammoth";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { matchStudentFromSignals } from "./src/lib/matching";
+import { extractNotebookText } from "./src/lib/notebook";
+import { parseExamQuestions } from "./src/lib/exam";
+import { isValidDb, atomicWriteJson, backupJson, loadLatestValidBackup } from "./src/lib/db";
 
 // 優先讀 .env.local（放本機機密，與 Vite 前端共用同一檔），再以 .env 補沒設到的值。
 // dotenv 預設不覆寫已存在的變數，所以先載入的 .env.local 具有較高優先序。
@@ -183,72 +186,14 @@ const DEFAULT_DB = {
    DB 安全儲存：原子寫入 + 自動備份 + 防呆驗證
    目標：絕不因為單次讀／寫失敗而弄丟既有成績資料。
    ────────────────────────────────────────────────────────────────────────── */
-const DB_TMP = DB_FILE + ".tmp";
 const DB_BACKUP_DIR = path.join(process.cwd(), "backups");
 const BACKUP_KEEP = 50;                          // 最多保留幾份備份
 const BACKUP_MIN_INTERVAL_MS = 3 * 60 * 1000;    // 同一份至少間隔 3 分鐘才再備份（避免每次改分都備份）
+// isValidDb / atomicWriteJson / backupJson / loadLatestValidBackup 來自 src/lib/db（有單元測試）
 
-// 基本結構驗證：合法的 DB 一定有 courses 陣列，且每門課有 id / students / assessments
-function isValidDb(data: any): boolean {
-  if (!data || !Array.isArray(data.courses)) return false;
-  const coursesOk = data.courses.every(
-    (c: any) => c && typeof c.id === "string" && Array.isArray(c.students) && Array.isArray(c.assessments)
-  );
-  // 新頂層集合（整合 unicourse）：有就必須是陣列，沒有也可（向後相容）
-  const optArrayOk = ["homeroomClasses", "roster", "transcripts", "officers", "examPapers"].every(
-    (k) => data[k] === undefined || Array.isArray(data[k])
-  );
-  return coursesOk && optArrayOk;
-}
-
-async function listBackups(): Promise<string[]> {
-  try {
-    return (await fs.readdir(DB_BACKUP_DIR))
-      .filter((f) => f.startsWith("db-") && f.endsWith(".json"))
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
-// 從最新一份「合法」備份還原（讀檔毀損時的救命稻草）
-async function tryRestoreFromBackup(): Promise<any | null> {
-  const files = (await listBackups()).reverse();
-  for (const f of files) {
-    try {
-      const data = JSON.parse(await fs.readFile(path.join(DB_BACKUP_DIR, f), "utf-8"));
-      if (isValidDb(data)) {
-        console.warn(`[DB] db.json 無法解析，已從備份還原：${f}`);
-        return data;
-      }
-    } catch {
-      /* 試下一份 */
-    }
-  }
-  return null;
-}
-
-// 覆寫前先備份目前的 db.json（節流 + 修剪），保住「上一個好版本」
 async function backupCurrentDB() {
   try {
-    await fs.access(DB_FILE);
-  } catch {
-    return; // 沒有現檔（首次執行）就不用備份
-  }
-  try {
-    await fs.mkdir(DB_BACKUP_DIR, { recursive: true });
-    const existing = await listBackups();
-    if (existing.length > 0) {
-      const newest = existing[existing.length - 1];
-      const stat = await fs.stat(path.join(DB_BACKUP_DIR, newest));
-      if (Date.now() - stat.mtimeMs < BACKUP_MIN_INTERVAL_MS) return; // 太近，跳過
-    }
-    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-    await fs.copyFile(DB_FILE, path.join(DB_BACKUP_DIR, `db-${stamp}.json`));
-    const after = await listBackups();
-    for (const f of after.slice(0, Math.max(0, after.length - BACKUP_KEEP))) {
-      await fs.unlink(path.join(DB_BACKUP_DIR, f)).catch(() => {});
-    }
+    await backupJson(DB_FILE, DB_BACKUP_DIR, { keep: BACKUP_KEEP, minIntervalMs: BACKUP_MIN_INTERVAL_MS });
   } catch (e: any) {
     console.warn("[DB] 備份失敗（不影響存檔）：", e.message);
   }
@@ -271,21 +216,23 @@ async function readDB() {
     if (!isValidDb(data)) throw new Error("schema invalid");
     return data;
   } catch {
-    const restored = await tryRestoreFromBackup();
-    if (restored) return restored;
+    const restored = await loadLatestValidBackup(DB_BACKUP_DIR, isValidDb);
+    if (restored) {
+      console.warn("[DB] db.json 無法解析，已從備份還原。");
+      return restored;
+    }
     // 無法還原也絕不覆蓋原檔，讓使用者能手動搶救
     throw new Error("db.json 內容毀損且無可用備份；已保留原檔未動，請手動檢查 db.json 或 backups/ 目錄。");
   }
 }
 
-// 原子寫入：備份舊檔 → 寫暫存檔 → rename 取代，避免寫到一半造成毀損。
+// 原子寫入：備份舊檔 → 暫存檔 → rename 取代
 async function writeDB(data: any) {
   if (!isValidDb(data)) {
     throw new Error("拒絕寫入：資料結構不合法（缺 courses/students/assessments），保護現有成績不被覆蓋。");
   }
   await backupCurrentDB();
-  await fs.writeFile(DB_TMP, JSON.stringify(data, null, 2), "utf-8");
-  await fs.rename(DB_TMP, DB_FILE);
+  await atomicWriteJson(DB_FILE, data);
 }
 
 /* ==========================================================================
@@ -315,39 +262,7 @@ async function writeGmailCache(courseId: string, assessmentId: string, data: any
   await fs.writeFile(gmailCachePath(courseId, assessmentId), JSON.stringify(data, null, 2), "utf-8");
 }
 
-// 從 Jupyter Notebook (.ipynb, 其實是 JSON) 擷取文字：Markdown + 程式碼 + 文字輸出。
-function extractNotebookText(buf: Buffer): string {
-  let nb: any;
-  try {
-    nb = JSON.parse(buf.toString("utf-8"));
-  } catch {
-    return "";
-  }
-  const cells = Array.isArray(nb.cells) ? nb.cells : [];
-  const parts: string[] = [];
-  for (const cell of cells) {
-    const src = Array.isArray(cell.source) ? cell.source.join("") : cell.source || "";
-    if (cell.cell_type === "markdown") {
-      if (src.trim()) parts.push("【Markdown】\n" + src);
-    } else if (cell.cell_type === "code") {
-      if (src.trim()) parts.push("【程式碼】\n" + src);
-      const outs = Array.isArray(cell.outputs) ? cell.outputs : [];
-      const outText = outs
-        .map((o: any) => {
-          if (o.text) return Array.isArray(o.text) ? o.text.join("") : o.text;
-          const tp = o.data && o.data["text/plain"];
-          if (tp) return Array.isArray(tp) ? tp.join("") : tp;
-          return "";
-        })
-        .join("")
-        .trim();
-      if (outText) parts.push("【輸出】\n" + outText.slice(0, 2000));
-    } else if (src.trim()) {
-      parts.push(src);
-    }
-  }
-  return parts.join("\n\n");
-}
+// extractNotebookText 改用共用模組 src/lib/notebook（有單元測試）
 
 // 依檔案型態組一個 Gemini content 片段（字串文字 或 {inlineData}）。不支援的格式回 null。
 // .ipynb / .docx 先擷取文字；圖片 / PDF / 純文字直接送原檔；其餘（.xlsx/壓縮檔…）回 null。
@@ -355,7 +270,7 @@ async function buildGradingPart(buf: Buffer, mimeType: string, filename: string)
   const mt = String(mimeType || "").toLowerCase();
   const fn = String(filename || "").toLowerCase();
   if (fn.endsWith(".ipynb")) {
-    const text = extractNotebookText(buf);
+    const text = extractNotebookText(buf.toString("utf-8"));
     return text.trim() ? `檔案「${filename}」(Jupyter Notebook 擷取)：\n${text}` : null;
   }
   if (mt.includes("wordprocessingml") || fn.endsWith(".docx")) {
@@ -494,26 +409,8 @@ async function generateExamWithGemini(opts: {
     },
   });
 
-  const raw = JSON.parse(result.text || "[]");
-  const POINTS: Record<string, number> = { basic: 4, medium: 5, advanced: 8 };
-  return (Array.isArray(raw) ? raw : []).map((q: any, i: number) => {
-    let options: { [k: string]: string } | undefined;
-    if (Array.isArray(q.options) && q.options.length) {
-      options = q.options.reduce((acc: any, o: any) => {
-        if (o && typeof o.key === "string") acc[o.key] = o.value;
-        return acc;
-      }, {});
-    }
-    return {
-      id: `gen-q-${i}`,
-      type: q.type,
-      question: q.question || "",
-      options,
-      correctAnswer: q.correctAnswer || "",
-      difficulty: q.difficulty || "medium",
-      points: POINTS[q.difficulty] ?? 5,
-    };
-  });
+  // 解析（options reduce、配分換算、補 id）改用共用模組 src/lib/exam（有單元測試）
+  return parseExamQuestions(JSON.parse(result.text || "[]"));
 }
 
 // 多訊號學籍配對改用共用模組 src/lib/matching（與前端同一份邏輯、有單元測試）
