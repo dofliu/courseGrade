@@ -25,8 +25,11 @@ const SERVER_STARTED_AT = new Date().toISOString();
 // JSON body 上限：支援一次上傳多份 base64 講義/掃描檔（出題的大 PDF）
 app.use(express.json({ limit: "50mb" }));
 
+// 資料根目錄：預設工作目錄；測試時可用 EDUGRADE_DATA_DIR 指向暫存目錄，避免碰到真實 db.json
+const DATA_DIR = process.env.EDUGRADE_DATA_DIR || process.cwd();
+
 // DB File destination
-const DB_FILE = path.join(process.cwd(), "db.json");
+const DB_FILE = path.join(DATA_DIR, "db.json");
 
 // Cache Gemini AI instance
 let aiClient: GoogleGenAI | null = null;
@@ -186,7 +189,7 @@ const DEFAULT_DB = {
    DB 安全儲存：原子寫入 + 自動備份 + 防呆驗證
    目標：絕不因為單次讀／寫失敗而弄丟既有成績資料。
    ────────────────────────────────────────────────────────────────────────── */
-const DB_BACKUP_DIR = path.join(process.cwd(), "backups");
+const DB_BACKUP_DIR = path.join(DATA_DIR, "backups");
 const BACKUP_KEEP = 50;                          // 最多保留幾份備份
 const BACKUP_MIN_INTERVAL_MS = 3 * 60 * 1000;    // 同一份至少間隔 3 分鐘才再備份（避免每次改分都備份）
 // isValidDb / atomicWriteJson / backupJson / loadLatestValidBackup 來自 src/lib/db（有單元測試）
@@ -241,7 +244,7 @@ async function writeDB(data: any) {
    之後複查 / AI 評分 / 下次開啟都讀本機，不必再連 Gmail。
    ========================================================================== */
 
-const GMAIL_CACHE_DIR = path.join(process.cwd(), "gmail_cache");
+const GMAIL_CACHE_DIR = path.join(DATA_DIR, "gmail_cache");
 const GMAIL_FILES_DIR = path.join(GMAIL_CACHE_DIR, "files");
 
 function safeKey(s: string) {
@@ -1072,4 +1075,9 @@ async function startServer() {
   });
 }
 
-startServer();
+// 測試時設 EDUGRADE_NO_LISTEN=1 匯入 app 跑 supertest，不啟動實際監聽 / Vite
+if (process.env.EDUGRADE_NO_LISTEN !== "1") {
+  startServer();
+}
+
+export { app };
