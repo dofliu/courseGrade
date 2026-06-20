@@ -854,7 +854,7 @@ export default function GradeBook({
 
                       {/* Overall Final Grade */}
                       <td className="p-3 text-right font-display font-black text-blue-600 pr-4 text-sm">
-                        <span className={finalGrade < 60 ? "text-red-500 font-bold" : "text-blue-600 font-semibold"}>
+                        <span className={finalGrade < (currentCourse.passMark ?? 60) ? "text-red-500 font-bold" : "text-blue-600 font-semibold"}>
                           {finalGrade} 分
                         </span>
                       </td>

@@ -29,6 +29,14 @@ export interface Course {
   semester: string; // e.g. "114-2"
   assessments: AssessmentItem[];
   students: Student[];
+  passMark?: number; // 及格門檻（預設 60）；用於「期末及格需考」與及格上色
+}
+
+// 評分標準範本：可重用的 rubric，於評分項目與 AI 出題挑選套用
+export interface RubricTemplate {
+  id: string;
+  name: string;     // 範本名稱（如：程式作業通用、計算題嚴格）
+  content: string;  // rubric 內文
 }
 
 // ====== UniCourse 整合：班級經營(B) / 跨學期成績(C) / 紙本考卷(A) ======
@@ -113,6 +121,7 @@ export interface DatabaseState {
   transcripts?: TranscriptEntry[];    // 新（C）
   officers?: ClassOfficer[];          // 新（B）
   examPapers?: ExamPaper[];           // 新（A）
+  rubricTemplates?: RubricTemplate[]; // 評分標準範本庫
 }
 
 // Simulated file for local upload preview

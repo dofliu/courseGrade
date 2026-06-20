@@ -491,6 +491,8 @@ export default function App() {
                   selectedCourseId={selectedCourseId}
                   onSelectCourse={setSelectedCourseId}
                   onUpdateCourses={handleUpdateCourses}
+                  rubricTemplates={dbState.rubricTemplates ?? []}
+                  onUpdateRubricTemplates={(tpls) => handleSaveDatabase({ ...dbState, rubricTemplates: tpls })}
                 />
               )}
             </div>

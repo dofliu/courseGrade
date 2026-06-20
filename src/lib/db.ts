@@ -5,7 +5,7 @@
 import fs from "fs/promises";
 import path from "path";
 
-const OPT_COLLECTIONS = ["homeroomClasses", "roster", "transcripts", "officers", "examPapers"];
+const OPT_COLLECTIONS = ["homeroomClasses", "roster", "transcripts", "officers", "examPapers", "rubricTemplates"];
 
 /** 結構驗證：一定要有合法 courses；新頂層集合有就必須是陣列（向後相容）。 */
 export function isValidDb(data: any): boolean {

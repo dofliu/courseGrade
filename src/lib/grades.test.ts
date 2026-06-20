@@ -73,6 +73,10 @@ describe("neededOnFinal", () => {
     const r = neededOnFinal(zhuang, assessments, final, 60);
     expect(r).toEqual({ kind: "need", need: 73 });
   });
+  it("及格門檻改 70 後，期末需考 98 分（(70-31)/0.4=97.5 進位）", () => {
+    const r = neededOnFinal(zhuang, assessments, final, 70);
+    expect(r).toEqual({ kind: "need", need: 98 });
+  });
   it("個人加 9 分後 banked=40，期末只需 50 分", () => {
     const r = neededOnFinal(zhuang, assessments, final, 60, 9);
     expect(r).toEqual({ kind: "need", need: 50 });

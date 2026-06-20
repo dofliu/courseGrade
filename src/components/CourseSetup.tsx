@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import * as XLSX from "xlsx";
-import { Course, Student, AssessmentItem } from "../types";
+import { Course, Student, AssessmentItem, RubricTemplate } from "../types";
 import { Plus, Trash2, Edit2, AlertCircle, CheckCircle, Upload, HelpCircle, Users, Percent, GraduationCap, ChevronDown, Check, FileSpreadsheet, FileUp } from "lucide-react";
 
 interface CourseSetupProps {
@@ -8,6 +8,8 @@ interface CourseSetupProps {
   selectedCourseId: string;
   onSelectCourse: (id: string) => void;
   onUpdateCourses: (courses: Course[]) => void;
+  rubricTemplates?: RubricTemplate[];
+  onUpdateRubricTemplates?: (templates: RubricTemplate[]) => void;
 }
 
 export default function CourseSetup({
@@ -15,6 +17,8 @@ export default function CourseSetup({
   selectedCourseId,
   onSelectCourse,
   onUpdateCourses,
+  rubricTemplates = [],
+  onUpdateRubricTemplates,
 }: CourseSetupProps) {
   const [isCreatingCourse, setIsCreatingCourse] = useState(false);
   const [newCourseName, setNewCourseName] = useState("");
@@ -114,6 +118,38 @@ export default function CourseSetup({
 
     const updatedCourses = courses.map((c) => (c.id === currentCourse.id ? updatedCourse : c));
     onUpdateCourses(updatedCourses);
+  };
+
+  // 更新課程層級欄位（如及格門檻 passMark）
+  const handleUpdateCourse = (fields: Partial<Course>) => {
+    if (!currentCourse) return;
+    onUpdateCourses(courses.map((c) => (c.id === currentCourse.id ? { ...currentCourse, ...fields } : c)));
+  };
+
+  // 評分標準範本庫：套用到某評分項目 / 把目前內容存成範本 / 刪除範本
+  const applyRubricTemplate = (index: number, templateId: string) => {
+    const t = rubricTemplates.find((r) => r.id === templateId);
+    if (t) handleUpdateAssessment(index, { rubric: t.content });
+  };
+
+  const saveRubricAsTemplate = (rubric: string) => {
+    if (!onUpdateRubricTemplates) return;
+    const content = (rubric || "").trim();
+    if (!content) {
+      alert("此項目尚無評分標準內容可存成範本。");
+      return;
+    }
+    const name = window.prompt("範本名稱：", "");
+    if (name == null) return;
+    const nm = name.trim() || `範本 ${rubricTemplates.length + 1}`;
+    onUpdateRubricTemplates([...rubricTemplates, { id: "rt-" + Date.now(), name: nm, content }]);
+  };
+
+  const deleteRubricTemplate = (id: string) => {
+    if (!onUpdateRubricTemplates) return;
+    if (confirm("確定刪除這個評分標準範本？")) {
+      onUpdateRubricTemplates(rubricTemplates.filter((r) => r.id !== id));
+    }
   };
 
   const handleDeleteAssessment = (asstId: string) => {
@@ -584,6 +620,30 @@ export default function CourseSetup({
               </div>
             </div>
           </div>
+
+          {/* 及格門檻設定 */}
+          {currentCourse && (
+            <div className="mt-4 p-4 rounded border border-slate-200 flex items-center justify-between gap-3">
+              <div>
+                <div className="text-xs text-slate-400 font-medium">及格門檻</div>
+                <p className="text-[11px] text-slate-400 mt-0.5">用於「期末及格需考」試算與及格上色</p>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={currentCourse.passMark ?? 60}
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? 60 : Math.max(0, Math.min(100, Number(e.target.value) || 0));
+                    handleUpdateCourse({ passMark: v });
+                  }}
+                  className="w-16 text-center px-2 py-1.5 border border-slate-200 rounded outline-none focus:border-blue-500 text-blue-700 font-bold"
+                />
+                <span className="text-xs text-slate-400">分</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -668,9 +728,33 @@ export default function CourseSetup({
 
                     {/* AI 評分標準 — 評分時會一併送給 Gemini 當依據 */}
                     <div className="pt-1">
-                      <label className="text-[10px] text-slate-500 font-semibold block mb-1">
-                        AI 評分標準 / 配分依據（選填）
-                      </label>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] text-slate-500 font-semibold">
+                          AI 評分標準 / 配分依據（選填）
+                        </label>
+                        {onUpdateRubricTemplates && (
+                          <div className="flex items-center gap-1.5">
+                            {rubricTemplates.length > 0 && (
+                              <select
+                                value=""
+                                onChange={(e) => { if (e.target.value) applyRubricTemplate(index, e.target.value); }}
+                                className="text-[10px] px-1.5 py-0.5 border border-slate-200 rounded bg-white text-slate-500 outline-none focus:border-blue-500"
+                                title="套用評分標準範本"
+                              >
+                                <option value="">套用範本…</option>
+                                {rubricTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                              </select>
+                            )}
+                            <button
+                              onClick={() => saveRubricAsTemplate(asst.rubric || "")}
+                              className="text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200 font-semibold"
+                              title="把目前內容存成範本"
+                            >
+                              ＋存成範本
+                            </button>
+                          </div>
+                        )}
+                      </div>
                       <textarea
                         rows={2}
                         value={asst.rubric || ""}
@@ -683,6 +767,34 @@ export default function CourseSetup({
                 ))}
               </div>
             </div>
+
+            {/* 評分標準範本庫 */}
+            {onUpdateRubricTemplates && rubricTemplates.length > 0 && (
+              <div className="bg-white p-6 border border-slate-200 shadow-sm space-y-3">
+                <h3 className="font-display font-semibold text-base text-slate-900 flex items-center gap-2">
+                  <FileSpreadsheet className="w-4 h-4 text-blue-600" />
+                  評分標準範本庫（{rubricTemplates.length}）
+                </h3>
+                <p className="text-[11px] text-slate-400 -mt-1">在各評分項目可用「套用範本」快速帶入；範本跨課程共用。</p>
+                <div className="space-y-1.5">
+                  {rubricTemplates.map((t) => (
+                    <div key={t.id} className="flex items-start justify-between gap-2 border border-slate-200 rounded p-2.5">
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold text-slate-700 truncate">{t.name}</div>
+                        <div className="text-[10px] text-slate-400 truncate">{t.content}</div>
+                      </div>
+                      <button
+                        onClick={() => deleteRubricTemplate(t.id)}
+                        className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50 flex-shrink-0"
+                        title="刪除範本"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Students roster block */}
             <div className="bg-white p-6 border border-slate-200 shadow-sm space-y-4">

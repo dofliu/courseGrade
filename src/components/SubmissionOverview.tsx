@@ -42,7 +42,7 @@ export default function SubmissionOverview({
       ? studentTotal(s.grades, assessments, s.adjustment)
       : null;
 
-  const PASS_MARK = 60;
+  const PASS_MARK = currentCourse.passMark ?? 60;
   const finalAsst = findFinalAssessment(assessments);
 
   // 期末考要考幾分才能讓「累計加權分」達及格門檻（含個人加減分；共用邏輯見 lib/grades）
@@ -167,7 +167,7 @@ export default function SubmissionOverview({
                       {weighted == null ? (
                         <span className="text-slate-300 text-xs font-normal">—</span>
                       ) : (
-                        <span className={weighted < 60 ? "text-red-500" : "text-blue-600"}>{weighted} 分</span>
+                        <span className={weighted < PASS_MARK ? "text-red-500" : "text-blue-600"}>{weighted} 分</span>
                       )}
                     </td>
                     <td className="p-3 text-center">

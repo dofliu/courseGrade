@@ -29,6 +29,10 @@ describe("isValidDb", () => {
   it("可選集合存在但非陣列 → 不合法", () => {
     expect(isValidDb({ courses: [], roster: {} })).toBe(false);
     expect(isValidDb({ courses: [], examPapers: "x" })).toBe(false);
+    expect(isValidDb({ courses: [], rubricTemplates: {} })).toBe(false);
+  });
+  it("rubricTemplates 為陣列 → 合法", () => {
+    expect(isValidDb({ courses: [], rubricTemplates: [{ id: "r1", name: "範本", content: "..." }] })).toBe(true);
   });
 });
 
