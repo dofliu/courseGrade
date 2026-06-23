@@ -750,21 +750,21 @@ export default function GradeBook({
         </div>
       )}
 
-      {/* CORE GRADEBOOK GRID TABLE */}
-      <div className="border border-slate-200 overflow-x-auto">
+      {/* CORE GRADEBOOK GRID TABLE — 容器限高+雙向捲動，標題列 sticky 固定在頂端 */}
+      <div className="border border-slate-200 overflow-auto max-h-[75vh]">
         <table className="w-full text-left min-w-[700px] border-collapse">
           <thead>
-            <tr className="bg-slate-50 border-b border-slate-200 text-slate-500 text-slate-600 font-semibold text-xs font-display">
-              <th className="p-3.5 w-10">編詳</th>
-              <th className="p-3.5 w-28">學號</th>
-              <th className="p-3.5 w-24">學生姓名</th>
+            <tr className="text-slate-500 text-slate-600 font-semibold text-xs font-display">
+              <th className="p-3.5 w-10 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_#e2e8f0]">編詳</th>
+              <th className="p-3.5 w-28 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_#e2e8f0]">學號</th>
+              <th className="p-3.5 w-24 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_#e2e8f0]">學生姓名</th>
               {assessments.map((a) => (
-                <th key={a.id} className="p-3.5 text-center truncate" title={`${a.name} (佔 ${a.weight}%)`}>
+                <th key={a.id} className="p-3.5 text-center truncate sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_#e2e8f0]" title={`${a.name} (佔 ${a.weight}%)`}>
                   <div>{a.name}</div>
                   <div className="text-[10px] text-slate-400 pt-0.5 font-medium">佔 {a.weight}%</div>
                 </th>
               ))}
-              <th className="p-3.5 text-right font-display text-blue-600 font-bold w-32">
+              <th className="p-3.5 text-right font-display text-blue-600 font-bold w-32 sticky top-0 z-20 bg-slate-50 shadow-[inset_0_-1px_0_#e2e8f0]">
                 目前累計加權分
               </th>
             </tr>
