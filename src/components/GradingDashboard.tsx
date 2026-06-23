@@ -32,7 +32,13 @@ export default function GradingDashboard({
 
   const students = currentCourse.students;
   const assessments = currentCourse.assessments;
+
+  // 「總成績」檢視：對每位學生的累計加權分做分佈，而非單一項目
+  const TOTAL_KEY = "__total__";
+  const isTotal = targetAsstId === TOTAL_KEY;
   const activeAssessment = assessments.find((a) => a.id === targetAsstId) || assessments[0];
+  // 是否每個項目都已評分（總成績檢視的「完整評分」判斷）
+  const isFullyGraded = (s: Student) => assessments.length > 0 && assessments.every((a) => s.grades[a.id] != null);
 
   // 1. 目前累計加權分（含個人加減分；共用邏輯見 lib/grades）
   const calculateWeightedGrade = (student: Student) => studentTotal(student.grades, assessments, student.adjustment);
@@ -59,17 +65,24 @@ export default function GradingDashboard({
     ? Math.round((activeGrades.reduce((sum, g) => sum + g, 0) / activeGrades.length) * 10) / 10
     : 0;
 
-  // Submitted vs Missing
-  const missingStudents = targetAsstId
+  // Submitted vs Missing（總成績檢視：未完整評分＝缺至少一項；單項檢視：該項未評）
+  const missingStudents = isTotal
+    ? students.filter((s) => !isFullyGraded(s))
+    : targetAsstId
     ? students.filter((s) => s.grades[targetAsstId] == null)
     : [];
 
   const submittedCount = studentCount - missingStudents.length;
-  const submissionRate = studentCount > 0 
-    ? Math.round((submittedCount / studentCount) * 100) 
+  const submissionRate = studentCount > 0
+    ? Math.round((submittedCount / studentCount) * 100)
     : 0;
 
-  // 3. Distribution chart for active assessment
+  // 卡片用的「平均」：總成績檢視顯示全班累計加權平均，否則顯示單項平均
+  const displayAverage = isTotal ? finalClassAverage : activeAsstAverage;
+
+  // 3. 分佈圖資料：總成績檢視＝每位學生累計加權分；單項檢視＝該項各學生分數
+  const distScores = isTotal ? studentWithFinals.map((s) => s.finalWeighted) : activeGrades;
+
   const buckets = [
     { range: "0-59 (不及格)", count: 0, color: "#ef4444" },
     { range: "60-69 (丙)", count: 0, color: "#f97316" },
@@ -78,7 +91,7 @@ export default function GradingDashboard({
     { range: "90-100 (優)", count: 0, color: "#10b981" },
   ];
 
-  activeGrades.forEach((score) => {
+  distScores.forEach((score) => {
     if (score < 60) buckets[0].count++;
     else if (score < 70) buckets[1].count++;
     else if (score < 80) buckets[2].count++;
@@ -154,21 +167,21 @@ ${currentCourse.semester} 課程助教組`;
         {/* Selected assessment average */}
         <div className="bg-white p-5 border border-slate-200 shadow-sm flex flex-col justify-between h-32">
           <div>
-            <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">主項平均 ({activeAssessment?.name || "無"})</p>
+            <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">{isTotal ? "總成績平均" : `主項平均 (${activeAssessment?.name || "無"})`}</p>
             <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-bold text-slate-900 font-display">{activeAsstAverage}</span>
+              <span className="text-3xl font-bold text-slate-900 font-display">{displayAverage}</span>
               <span className="text-slate-400 text-xs">分</span>
             </div>
           </div>
           <div className="w-full bg-slate-100 h-1 mt-3">
-            <div className="bg-amber-500 h-1" style={{ width: `${Math.min(activeAsstAverage || 0, 100)}%` }}></div>
+            <div className="bg-amber-500 h-1" style={{ width: `${Math.min(displayAverage || 0, 100)}%` }}></div>
           </div>
         </div>
 
         {/* Target assessment submission rate */}
         <div className="bg-white p-5 border border-slate-200 shadow-sm flex flex-col justify-between h-32">
           <div>
-            <p className="text-slate-500 text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">主項繳交比率</p>
+            <p className="text-slate-500 text-slate-500 text-xs font-semibold uppercase tracking-wider mb-1">{isTotal ? "完整評分比率" : "主項繳交比率"}</p>
             <div className="flex items-baseline gap-2">
               <span className="text-3xl font-bold text-emerald-600 font-display">{submissionRate}%</span>
               <span className="text-slate-400 text-slate-400 text-xs">({submittedCount}/{studentCount})</span>
@@ -189,9 +202,11 @@ ${currentCourse.semester} 課程助教組`;
             <div>
               <h4 className="font-display font-semibold text-slate-900 text-md flex items-center gap-1.5">
                 <BarChart3 className="w-5 h-5 text-blue-600" />
-                項目成績區間分佈統計
+                {isTotal ? "總成績區間分佈統計" : "項目成績區間分佈統計"}
               </h4>
-              <p className="text-xs text-slate-400 mt-0.5">即時統計各項目不同分數階段的同學人數比例</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {isTotal ? "依每位學生的累計加權分統計各等第人數" : "即時統計各項目不同分數階段的同學人數比例"}
+              </p>
             </div>
 
             <div className="flex items-center gap-2">
@@ -201,6 +216,7 @@ ${currentCourse.semester} 課程助教組`;
                 onChange={(e) => setTargetAsstId(e.target.value)}
                 className="text-xs px-3 py-1.5 border border-slate-200 rounded outline-none bg-slate-50 text-slate-700 font-medium focus:border-blue-500"
               >
+                <option value={TOTAL_KEY}>📊 總成績（累計加權）</option>
                 {assessments.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
@@ -236,9 +252,11 @@ ${currentCourse.semester} 課程助教組`;
             <div className="pb-3 border-b border-slate-100 space-y-1">
               <h4 className="font-display font-semibold text-slate-900 text-md flex items-center gap-2">
                 <AlertCircle className="w-5 h-5 text-blue-600" />
-                未交名單與催促助手
+                {isTotal ? "尚未完整評分名單" : "未交名單與催促助手"}
               </h4>
-              <p className="text-xs text-slate-400">目前「{activeAssessment?.name || "作業"}」項目中，尚未取得評分者</p>
+              <p className="text-xs text-slate-400">
+                {isTotal ? "尚有評分項目未完成（缺至少一項）的學生" : `目前「${activeAssessment?.name || "作業"}」項目中，尚未取得評分者`}
+              </p>
             </div>
 
             {/* List of outstanding students */}
@@ -259,7 +277,7 @@ ${currentCourse.semester} 課程助教組`;
                       <span className="text-slate-400 ml-1.5 font-mono">({stud.studentId})</span>
                     </div>
                     <span className="px-2 py-0.5 bg-red-50 text-red-600 rounded text-[10px] font-semibold font-mono">
-                      未交 (缺)
+                      {isTotal ? "未完整" : "未交 (缺)"}
                     </span>
                   </div>
                 ))
@@ -267,8 +285,8 @@ ${currentCourse.semester} 課程助教組`;
             </div>
           </div>
 
-          {/* Copy Template helper */}
-          {missingStudents.length > 0 && (
+          {/* Copy Template helper（催繳信為單項用，總成績檢視不顯示） */}
+          {!isTotal && missingStudents.length > 0 && (
             <div className="p-3 bg-blue-50/70 border border-blue-100 rounded space-y-2.5">
               <div className="flex items-center justify-between text-xs text-blue-800">
                 <span className="font-semibold flex items-center gap-1">
