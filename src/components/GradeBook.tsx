@@ -72,8 +72,8 @@ export default function GradeBook({
     return matchesSearch;
   });
 
-  // Handle saving of cell click
-  const handleSaveCellGrade = (studentId: string, asstId: string) => {
+  // Handle saving of cell click。advance=true（按 Enter）時，存完自動跳到「下一位學生、同一項目」繼續輸入
+  const handleSaveCellGrade = (studentId: string, asstId: string, advance = false) => {
     const scoreVal = parseInt(editingScoreText);
     if (isNaN(scoreVal) || scoreVal < 0 || scoreVal > 100) {
       alert("請輸入介於 0 至 100 之間的有效分數！");
@@ -100,6 +100,18 @@ export default function GradeBook({
 
     const updatedCourses = courses.map((c) => (c.id === currentCourse.id ? updatedCourse : c));
     onUpdateCourses(updatedCourses);
+
+    // 按 Enter：跳到下一位學生的同一項目（依目前顯示/篩選順序）；已是最後一位則收起
+    if (advance) {
+      const idx = filteredStudents.findIndex((s) => s.id === studentId);
+      const next = idx >= 0 ? filteredStudents[idx + 1] : undefined;
+      if (next) {
+        const ng = next.grades[asstId];
+        setEditingCell({ studentId: next.id, asstId });
+        setEditingScoreText(ng != null ? ng.toString() : "");
+        return;
+      }
+    }
     setEditingCell(null);
   };
 
@@ -817,9 +829,10 @@ export default function GradeBook({
                                   value={editingScoreText}
                                   onChange={(e) => setEditingScoreText(e.target.value)}
                                   onKeyDown={(e) => {
-                                    if (e.key === "Enter") handleSaveCellGrade(student.id, asst.id);
+                                    if (e.key === "Enter") handleSaveCellGrade(student.id, asst.id, true);
                                     if (e.key === "Escape") setEditingCell(null);
                                   }}
+                                  onFocus={(e) => e.target.select()}
                                   className="w-10 text-center font-bold text-xs p-0.5 border border-blue-600 rounded bg-white text-blue-600 outline-none"
                                   autoFocus
                                 />
